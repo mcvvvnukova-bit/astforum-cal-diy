@@ -74,4 +74,21 @@ describe("EventDetails demo widget presentation", () => {
     expect(screen.getByText("Cal Video")).toBeInTheDocument();
     expect(screen.getByText("1h")).toBeInTheDocument();
   });
+
+  it("preserves confirmation, location, and duration for another embedded event", () => {
+    embedState.isEmbed = true;
+
+    render(
+      <TooltipProvider>
+        <EventDetails event={event} />
+      </TooltipProvider>,
+      {
+        mockStore: { username: "demo", eventSlug: "30min" },
+      }
+    );
+
+    expect(screen.getByText("requires_confirmation")).toBeInTheDocument();
+    expect(screen.getByText("Cal Video")).toBeInTheDocument();
+    expect(screen.getByText("1h")).toBeInTheDocument();
+  });
 });
