@@ -81,6 +81,12 @@ WORKDIR /calcom
 RUN apt-get update && apt-get install -y --no-install-recommends netcat-openbsd wget && rm -rf /var/lib/apt/lists/*
 
 COPY --from=builder-two /calcom ./
+COPY LICENSE /calcom/LICENSE
+COPY deployment/astforum/start.sh /calcom/scripts/start-astforum.sh
+ARG VCS_REF
+LABEL org.opencontainers.image.source="https://github.com/mcvvvnukova-bit/astforum-cal-diy" \
+  org.opencontainers.image.revision=$VCS_REF \
+  org.opencontainers.image.licenses="MIT"
 ARG NEXT_PUBLIC_WEBAPP_URL=http://localhost:3000
 ENV NEXT_PUBLIC_WEBAPP_URL=$NEXT_PUBLIC_WEBAPP_URL \
   BUILT_NEXT_PUBLIC_WEBAPP_URL=$NEXT_PUBLIC_WEBAPP_URL
@@ -91,4 +97,4 @@ EXPOSE 3000
 HEALTHCHECK --interval=30s --timeout=30s --retries=5 \
   CMD wget --spider http://localhost:3000 || exit 1
 
-CMD ["/calcom/scripts/start.sh"]
+CMD ["sh", "/calcom/scripts/start-astforum.sh"]

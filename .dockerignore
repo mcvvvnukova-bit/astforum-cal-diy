@@ -34,3 +34,11 @@ Thumbs.db
 
 # Examples and docs
 docs
+
+# Runtime credentials must never enter an image build context.
+.env
+.env.*
+**/.env
+**/.env.*
+*.dump
+**/*.dump

@@ -1,0 +1,86 @@
+name: astforum-cal-diy
+
+services:
+  database:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: caldiy
+      POSTGRES_DB: caldiy
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD}
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    networks:
+      - backend
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U caldiy -d caldiy"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  redis:
+    image: redis:8-alpine
+    restart: unless-stopped
+    command: ["redis-server", "--appendonly", "yes"]
+    volumes:
+      - redis-data:/data
+    networks:
+      - backend
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  web:
+    image: ${CALDIY_IMAGE:?Set CALDIY_IMAGE to a pinned fork build}
+    restart: unless-stopped
+    init: true
+    environment:
+      NODE_ENV: production
+      NEXT_PUBLIC_WEBAPP_URL: https://cal.astforum.ru
+      NEXT_PUBLIC_WEBSITE_URL: https://cal.astforum.ru
+      NEXTAUTH_URL: https://cal.astforum.ru/api/auth
+      NEXTAUTH_SECRET: ${NEXTAUTH_SECRET:?Set NEXTAUTH_SECRET}
+      CALENDSO_ENCRYPTION_KEY: ${CALENDSO_ENCRYPTION_KEY:?Set CALENDSO_ENCRYPTION_KEY}
+      DATABASE_HOST: database:5432
+      DATABASE_URL: postgresql://caldiy:${POSTGRES_PASSWORD}@database:5432/caldiy
+      DATABASE_DIRECT_URL: postgresql://caldiy:${POSTGRES_PASSWORD}@database:5432/caldiy
+      REDIS_URL: redis://redis:6379
+      NEXT_PUBLIC_DISABLE_SIGNUP: "true"
+      CALCOM_TELEMETRY_DISABLED: "1"
+      NEXT_TELEMETRY_DISABLED: "1"
+      TURBO_TELEMETRY_DISABLED: "1"
+      NEXT_PUBLIC_VAPID_PUBLIC_KEY: ${NEXT_PUBLIC_VAPID_PUBLIC_KEY:?Set NEXT_PUBLIC_VAPID_PUBLIC_KEY}
+      VAPID_PRIVATE_KEY: ${VAPID_PRIVATE_KEY:?Set VAPID_PRIVATE_KEY}
+      VAPID_SUBJECT: mailto:admin@astforum.ru
+      TZ: Europe/Moscow
+    expose:
+      - "3000"
+    networks:
+      - backend
+      - outbound
+      - proxy
+    depends_on:
+      database:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "--quiet", "--spider", "http://127.0.0.1:3000/auth/login"]
+      interval: 15s
+      timeout: 10s
+      retries: 10
+      start_period: 90s
+
+volumes:
+  postgres-data:
+  redis-data:
+
+networks:
+  backend:
+    internal: true
+  outbound:
+  proxy:
+    external: true
+    name: outline_frontend
