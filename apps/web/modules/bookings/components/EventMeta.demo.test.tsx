@@ -4,6 +4,7 @@
 
 import { render, screen } from "@calcom/features/bookings/Booker/__tests__/test-utils";
 import type { BookerEvent } from "@calcom/features/bookings/types";
+import { BookerLayouts } from "@calcom/prisma/zod-utils";
 import { TooltipProvider } from "@radix-ui/react-tooltip";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { EventMeta } from "./EventMeta";
@@ -78,11 +79,18 @@ const event = Object.freeze({
 const renderEventMeta = ({
   state,
   timezone,
+  isEmbed = true,
+  eventSlug = "60min",
+  layout = BookerLayouts.MONTH_VIEW,
 }: {
   state: "booking" | "selecting_date";
   timezone: string;
-}): ReturnType<typeof render> =>
-  render(
+  isEmbed?: boolean;
+  eventSlug?: string;
+  layout?: BookerLayouts;
+}): ReturnType<typeof render> => {
+  boundaryState.isEmbed = isEmbed;
+  return render(
     <TooltipProvider>
       <EventMeta
         event={event}
@@ -96,12 +104,14 @@ const renderEventMeta = ({
     {
       mockStore: {
         username: "demo",
-        eventSlug: "60min",
+        eventSlug,
         state,
         timezone,
+        layout,
       },
     }
   );
+};
 
 describe("EventMeta demo booking timezone presentation", () => {
   beforeEach(() => {
@@ -128,8 +138,36 @@ describe("EventMeta demo booking timezone presentation", () => {
     expect(timezone.compareDocumentPosition(duration) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
   });
 
-  it("keeps the raw timezone and normal detail order on the first step", () => {
+  it("removes the legacy timezone selector from the target first step", () => {
     renderEventMeta({ state: "selecting_date", timezone: "Europe/Moscow" });
+
+    expect(screen.getByText("1ч")).toBeInTheDocument();
+    expect(screen.queryByTestId("event-meta-current-timezone")).not.toBeInTheDocument();
+    expect(screen.queryByText("по московскому времени (GMT+3)")).not.toBeInTheDocument();
+  });
+
+  it.each([
+    {
+      label: "the same non-embedded event",
+      isEmbed: false,
+      eventSlug: "60min",
+      layout: BookerLayouts.MONTH_VIEW,
+    },
+    { label: "another embedded event", isEmbed: true, eventSlug: "30min", layout: BookerLayouts.MONTH_VIEW },
+    {
+      label: "the embedded demo week layout",
+      isEmbed: true,
+      eventSlug: "60min",
+      layout: BookerLayouts.WEEK_VIEW,
+    },
+    {
+      label: "the embedded demo column layout",
+      isEmbed: true,
+      eventSlug: "60min",
+      layout: BookerLayouts.COLUMN_VIEW,
+    },
+  ])("retains the selector after duration for $label", ({ isEmbed, eventSlug, layout }) => {
+    renderEventMeta({ state: "selecting_date", timezone: "Europe/Moscow", isEmbed, eventSlug, layout });
 
     const duration = screen.getByText("1ч");
     const timezone = screen.getByTestId("event-meta-current-timezone");
