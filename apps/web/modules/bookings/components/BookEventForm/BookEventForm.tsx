@@ -3,6 +3,7 @@ import { useIsPlatformBookerEmbed } from "@calcom/atoms/hooks/useIsPlatformBooke
 import { useBookerStoreContext } from "@calcom/features/bookings/Booker/BookerStoreProvider";
 import { useBookerTime } from "@calcom/features/bookings/Booker/hooks/useBookerTime";
 import type { UseBookingFormReturnType } from "@calcom/features/bookings/Booker/hooks/useBookingForm";
+import { useDemoWidgetPresentation } from "@calcom/features/bookings/Booker/hooks/useDemoWidgetPresentation";
 import { formatEventFromTime } from "@calcom/features/bookings/Booker/utils/dates";
 import type { BookerEvent } from "@calcom/features/bookings/types";
 import ServerTrans from "@calcom/lib/components/ServerTrans";
@@ -72,6 +73,9 @@ export const BookEventForm = ({
   const bookingData = useBookerStoreContext((state) => state.bookingData);
   const rescheduleUid = useBookerStoreContext((state) => state.rescheduleUid);
   const username = useBookerStoreContext((state) => state.username);
+  const bookerState = useBookerStoreContext((state) => state.state);
+  const isDemoWidget = useDemoWidgetPresentation();
+  const isDemoBookingStep = isDemoWidget && bookerState === "booking";
   const isPlatformBookerEmbed = useIsPlatformBookerEmbed();
   const { timeFormat, timezone } = useBookerTime();
 
@@ -178,7 +182,7 @@ export const BookEventForm = ({
           <div className="my-3 w-full text-xs text-subtle">
             <ServerTrans
               t={t}
-              i18nKey="signing_up_terms"
+              i18nKey={isDemoBookingStep ? "demo_booking_terms" : "signing_up_terms"}
               values={{ appName: APP_NAME }}
               components={[
                 <Link
