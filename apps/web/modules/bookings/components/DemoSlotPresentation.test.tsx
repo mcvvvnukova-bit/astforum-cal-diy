@@ -150,7 +150,7 @@ describe("demo slot selection presentation", () => {
     const zone = screen.getByTestId("demo-slot-timezone");
 
     expect(time).toHaveTextContent("14:00");
-    expect(zone).toHaveTextContent("по московскому времени (GMT+3)");
+    expect(zone).toHaveTextContent("МСК (GMT+3)");
     expect(time.compareDocumentPosition(zone) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
     expect(zone.querySelector("button,input,select,[role=combobox],[tabindex]")).toBeNull();
     expect(zone.className).not.toContain("cursor-not-allowed");
@@ -173,7 +173,7 @@ describe("demo slot selection presentation", () => {
 
     await screen.findByTestId("time");
     expect(screen.getByTestId("demo-slot-timezone")).toHaveTextContent("Asia/Yekaterinburg");
-    expect(screen.queryByText("по московскому времени (GMT+3)")).not.toBeInTheDocument();
+    expect(screen.queryByText("МСК (GMT+3)")).not.toBeInTheDocument();
   });
 
   it("keeps the timezone footer visible when the duplicate desktop header is hidden", async () => {

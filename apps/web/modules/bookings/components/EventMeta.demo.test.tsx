@@ -122,10 +122,10 @@ describe("EventMeta demo booking timezone presentation", () => {
   it("shows the Moscow label before duration on the target booking step", () => {
     renderEventMeta({ state: "booking", timezone: "Europe/Moscow" });
 
-    const timezone = screen.getByText("по московскому времени (GMT+3)");
+    const timezone = screen.getByText("МСК (GMT+3)");
     const duration = screen.getByText("1ч");
 
-    expect(timezone.textContent).toBe("по московскому времени (GMT+3)");
+    expect(timezone.textContent).toBe("МСК (GMT+3)");
     expect(timezone.compareDocumentPosition(duration) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
   });
 
@@ -143,7 +143,7 @@ describe("EventMeta demo booking timezone presentation", () => {
 
     expect(screen.getByText("1ч")).toBeInTheDocument();
     expect(screen.queryByTestId("event-meta-current-timezone")).not.toBeInTheDocument();
-    expect(screen.queryByText("по московскому времени (GMT+3)")).not.toBeInTheDocument();
+    expect(screen.queryByText("МСК (GMT+3)")).not.toBeInTheDocument();
   });
 
   it.each([
@@ -174,6 +174,6 @@ describe("EventMeta demo booking timezone presentation", () => {
 
     expect(duration.compareDocumentPosition(timezone) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
     expect(timezone).toHaveClass("current-timezone");
-    expect(screen.queryByText("по московскому времени (GMT+3)")).not.toBeInTheDocument();
+    expect(screen.queryByText("МСК (GMT+3)")).not.toBeInTheDocument();
   });
 });
