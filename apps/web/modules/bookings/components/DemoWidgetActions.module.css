@@ -1,0 +1,38 @@
+@layer forum {
+  .primaryAction {
+    --forum-primitive-accent: #ff551a;
+    --forum-primitive-accent-hover: #ff7140;
+    --forum-primitive-accent-pressed: #e64a12;
+    --forum-primitive-black: #040404;
+    --forum-color-bg-accent: var(--forum-primitive-accent);
+    --forum-color-bg-accent-hover: var(--forum-primitive-accent-hover);
+    --forum-color-bg-accent-pressed: var(--forum-primitive-accent-pressed);
+    --forum-color-text-on-accent: var(--forum-primitive-black);
+    --forum-color-border-focus: var(--forum-primitive-accent);
+  }
+}
+
+.primaryAction {
+  --button-primary-bgColor-rest: var(--forum-color-bg-accent);
+  --button-primary-bgColor-hover: var(--forum-color-bg-accent-hover);
+  --button-primary-bgColor-active: var(--forum-color-bg-accent-pressed);
+  --button-primary-fgColor-rest: var(--forum-color-text-on-accent);
+  background-color: var(--button-primary-bgColor-rest);
+  border-color: var(--button-primary-bgColor-rest);
+  color: var(--button-primary-fgColor-rest);
+}
+
+.primaryAction:not(:disabled):hover {
+  background-color: var(--button-primary-bgColor-hover);
+  border-color: var(--button-primary-bgColor-hover);
+}
+
+.primaryAction:not(:disabled):active {
+  background-color: var(--button-primary-bgColor-active);
+  border-color: var(--button-primary-bgColor-active);
+}
+
+.primaryAction:focus-visible {
+  outline: 2px solid var(--forum-color-border-focus);
+  outline-offset: 2px;
+}

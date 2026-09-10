@@ -207,7 +207,15 @@ describe("demo booking phone presentation", () => {
 
 type BookEventFormProps = ComponentProps<typeof BookEventForm>;
 
-const BookEventFormHarness = (): JSX.Element => {
+const BookEventFormHarness = ({
+  classNames,
+  confirmButtonDisabled = false,
+  loadingStates = { creatingBooking: false, creatingRecurringBooking: false },
+}: {
+  classNames?: BookEventFormProps["classNames"];
+  confirmButtonDisabled?: boolean;
+  loadingStates?: BookEventFormProps["loadingStates"];
+}): JSX.Element => {
   const form = useForm({
     defaultValues: {
       responses: {},
@@ -229,6 +237,7 @@ const BookEventFormHarness = (): JSX.Element => {
           locations: [],
         },
       }}
+      onCancel={vi.fn()}
       onSubmit={vi.fn()}
       errorRef={{ current: null }}
       errors={{
@@ -237,12 +246,14 @@ const BookEventFormHarness = (): JSX.Element => {
         hasDataErrors: false,
         dataErrors: undefined,
       }}
-      loadingStates={{ creatingBooking: false, creatingRecurringBooking: false }}
+      loadingStates={loadingStates}
       bookingForm={form as BookEventFormProps["bookingForm"]}
       renderConfirmNotVerifyEmailButtonCond={true}
       extraOptions={{}}
       isVerificationCodeSending={false}
       isTimeslotUnavailable={false}
+      confirmButtonDisabled={confirmButtonDisabled}
+      classNames={classNames}
       timeslot="2026-09-08T09:00:00.000Z"
     />
   );
@@ -269,5 +280,55 @@ describe("demo booking agreement", () => {
     );
     expect(terms).toHaveAttribute("href", WEBSITE_TERMS_URL);
     expect(privacy).toHaveAttribute("href", WEBSITE_PRIVACY_POLICY_URL);
+  });
+});
+
+describe("demo booking primary action presentation", () => {
+  beforeEach(() => {
+    boundaryState.isEmbed = true;
+    boundaryState.language = "ru";
+  });
+
+  it("adds the scoped action class to the target confirmation while preserving the caller class", () => {
+    render(
+      <BookEventFormHarness classNames={{ confirmButton: "caller-confirm", backButton: "caller-back" }} />,
+      { mockStore: { username: "demo", eventSlug: "60min", state: "booking", timezone: "Europe/Moscow" } }
+    );
+
+    const confirm = screen.getByTestId("confirm-book-button");
+    expect(confirm).toHaveClass("caller-confirm");
+    expect(confirm.className).toMatch(/primaryAction/);
+    expect(screen.getByTestId("back")).toHaveClass("caller-back");
+    expect(screen.getByTestId("back").className).not.toMatch(/primaryAction/);
+  });
+
+  it.each([
+    { label: "the direct target event", isEmbed: false, username: "demo", eventSlug: "60min" },
+    { label: "another embedded event", isEmbed: true, username: "demo", eventSlug: "30min" },
+    { label: "another embedded username", isEmbed: true, username: "other", eventSlug: "60min" },
+  ])("does not add the scoped action class for $label", ({ isEmbed, username, eventSlug }) => {
+    boundaryState.isEmbed = isEmbed;
+
+    render(<BookEventFormHarness />, {
+      mockStore: { username, eventSlug, state: "booking", timezone: "Europe/Moscow" },
+    });
+
+    expect(screen.getByTestId("confirm-book-button").className).not.toMatch(/primaryAction/);
+  });
+
+  it("keeps the target confirmation disabled and loading while applying the scoped action class", () => {
+    render(
+      <BookEventFormHarness
+        classNames={{ confirmButton: "caller-confirm" }}
+        confirmButtonDisabled
+        loadingStates={{ creatingBooking: true, creatingRecurringBooking: false }}
+      />,
+      { mockStore: { username: "demo", eventSlug: "60min", state: "booking", timezone: "Europe/Moscow" } }
+    );
+
+    const confirm = screen.getByTestId("confirm-book-button");
+    expect(confirm).toBeDisabled();
+    expect(confirm).toHaveClass("caller-confirm");
+    expect(confirm.className).toMatch(/primaryAction/);
   });
 });

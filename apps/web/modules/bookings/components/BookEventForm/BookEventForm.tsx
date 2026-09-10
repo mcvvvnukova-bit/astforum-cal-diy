@@ -11,6 +11,7 @@ import { APP_NAME, WEBSITE_PRIVACY_POLICY_URL, WEBSITE_TERMS_URL } from "@calcom
 import { ErrorCode } from "@calcom/lib/errorCodes";
 import { useLocale } from "@calcom/lib/hooks/useLocale";
 import type { TimeFormat } from "@calcom/lib/timeFormat";
+import classNamesHelper from "@calcom/ui/classNames";
 import { Alert } from "@calcom/ui/components/alert";
 import { Button } from "@calcom/ui/components/button";
 import { EmptyScreen } from "@calcom/ui/components/empty-screen";
@@ -20,6 +21,7 @@ import Link from "next/link";
 import { useMemo, useState } from "react";
 import type { FieldError } from "react-hook-form";
 import type { IUseBookingErrors, IUseBookingLoadingStates } from "../../hooks/useBookings";
+import styles from "../DemoWidgetActions.module.css";
 import { BookingFields } from "./BookingFields";
 import { FormSkeleton } from "./Skeleton";
 
@@ -248,7 +250,7 @@ export const BookEventForm = ({
               loadingStates.creatingRecurringBooking ||
               isVerificationCodeSending
             }
-            className={classNames?.confirmButton}
+            className={classNamesHelper(classNames?.confirmButton, isDemoWidget && styles.primaryAction)}
             data-testid={rescheduleUid && bookingData ? "confirm-reschedule-button" : "confirm-book-button"}>
             {rescheduleUid && bookingData
               ? t("reschedule")
