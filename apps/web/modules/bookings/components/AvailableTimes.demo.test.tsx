@@ -95,9 +95,21 @@ describe("demo available time primary action presentation", () => {
     expect(screen.getByTestId("skip-confirm-book-button").className).not.toMatch(/primaryAction/);
   });
 
-  it("keeps the target confirmation disabled and loading while applying the scoped action class", () => {
+  it("keeps the target confirmation disabled while applying the scoped action class", () => {
     renderAvailableTimes({
       confirmButtonDisabled: true,
+    });
+
+    const confirm = screen.getByTestId("skip-confirm-book-button");
+    expect(confirm).toBeDisabled();
+    expect(confirm).toHaveClass("caller-confirm");
+    expect(confirm.className).toMatch(/primaryAction/);
+    expect(confirm.querySelector("svg.animate-spin")).not.toBeInTheDocument();
+  });
+
+  it("shows a loading spinner for the target confirmation while applying the scoped action class", () => {
+    renderAvailableTimes({
+      store: { selectedTimeslot: "2026-09-08T09:00:00.000Z" },
       loadingStates: { creatingBooking: true, creatingRecurringBooking: false },
     });
 
@@ -105,5 +117,6 @@ describe("demo available time primary action presentation", () => {
     expect(confirm).toBeDisabled();
     expect(confirm).toHaveClass("caller-confirm");
     expect(confirm.className).toMatch(/primaryAction/);
+    expect(confirm.querySelector("svg.animate-spin")).toBeInTheDocument();
   });
 });

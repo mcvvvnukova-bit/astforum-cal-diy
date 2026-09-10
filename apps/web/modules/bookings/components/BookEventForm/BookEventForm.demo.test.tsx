@@ -316,11 +316,22 @@ describe("demo booking primary action presentation", () => {
     expect(screen.getByTestId("confirm-book-button").className).not.toMatch(/primaryAction/);
   });
 
-  it("keeps the target confirmation disabled and loading while applying the scoped action class", () => {
+  it("keeps the target confirmation disabled while applying the scoped action class", () => {
+    render(<BookEventFormHarness classNames={{ confirmButton: "caller-confirm" }} confirmButtonDisabled />, {
+      mockStore: { username: "demo", eventSlug: "60min", state: "booking", timezone: "Europe/Moscow" },
+    });
+
+    const confirm = screen.getByTestId("confirm-book-button");
+    expect(confirm).toBeDisabled();
+    expect(confirm).toHaveClass("caller-confirm");
+    expect(confirm.className).toMatch(/primaryAction/);
+    expect(confirm.querySelector("svg.animate-spin")).not.toBeInTheDocument();
+  });
+
+  it("shows a loading spinner for the target confirmation while applying the scoped action class", () => {
     render(
       <BookEventFormHarness
         classNames={{ confirmButton: "caller-confirm" }}
-        confirmButtonDisabled
         loadingStates={{ creatingBooking: true, creatingRecurringBooking: false }}
       />,
       { mockStore: { username: "demo", eventSlug: "60min", state: "booking", timezone: "Europe/Moscow" } }
@@ -330,5 +341,6 @@ describe("demo booking primary action presentation", () => {
     expect(confirm).toBeDisabled();
     expect(confirm).toHaveClass("caller-confirm");
     expect(confirm.className).toMatch(/primaryAction/);
+    expect(confirm.querySelector("svg.animate-spin")).toBeInTheDocument();
   });
 });
