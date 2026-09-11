@@ -29,7 +29,38 @@ Do not import a complete Cal.com database or use the `calcom/cal.com` image.
 Initialize the first administrator through `/api/auth/setup` before exposing
 the new instance publicly. Public signup is disabled; first setup is allowed
 only while the user table is empty. Generate new credentials for a clean install.
-SMTP and external calendar/video integrations require separate configuration.
+External calendar/video integrations require separate configuration.
+
+## Booking email
+
+Cal.diy sends transactional email as `АСТ Форум <notifications@astforum.ru>`
+through the existing Stalwart server. Store the mailbox's hexadecimal password
+as `CALDIY_SMTP_PASSWORD` in the server-only `.env`. Its original credential is
+kept in `/opt/astforum-mail/secrets/notifications_password` on the VPS.
+
+`EMAIL_SERVER` uses SMTP over TLS on port 465 and the stable Docker alias
+`astforum-stalwart` on `outline_frontend`. The `tls.servername` URL parameter
+sets `mail.astforum.ru` for SNI and certificate verification. Certificate
+verification remains enabled. This internal route avoids the public IP's
+unavailable NAT loopback from the Cal.diy container.
+
+For `demo/60min` (event type 3), the email booking field must be required and
+visible. Standard attendee emails must remain enabled. The existing manual
+confirmation setting means the visitor first receives a booking-request email;
+the confirmed calendar invitation follows the organizer's acceptance.
+
+After changing SMTP settings, validate Compose and recreate only `web`, keeping
+the currently deployed release's `web-command.override.yaml` in the Compose
+file list. The override pins the active image and startup command; omitting it
+can roll the application back. Verify SMTP authentication from the container,
+an actual attendee email, and the public booking page before declaring success.
+
+Manager acceptance sends the standard confirmation after the accepted status
+has been saved, including when an external calendar/video integration fails.
+An integration failure still needs the organizer's attention and does not
+produce a working meeting URL. Verify this path through the authenticated
+booking confirmation API, then check the received attendee calendar attachment
+for `STATUS:CONFIRMED` and the expected UTC start/end times.
 
 ## Build
 

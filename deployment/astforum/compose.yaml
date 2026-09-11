@@ -54,6 +54,9 @@ services:
       NEXT_PUBLIC_VAPID_PUBLIC_KEY: ${NEXT_PUBLIC_VAPID_PUBLIC_KEY:?Set NEXT_PUBLIC_VAPID_PUBLIC_KEY}
       VAPID_PRIVATE_KEY: ${VAPID_PRIVATE_KEY:?Set VAPID_PRIVATE_KEY}
       VAPID_SUBJECT: mailto:admin@astforum.ru
+      EMAIL_SERVER: smtps://notifications%40astforum.ru:${CALDIY_SMTP_PASSWORD:?Set CALDIY_SMTP_PASSWORD}@astforum-stalwart:465/?tls.servername=mail.astforum.ru
+      EMAIL_FROM: notifications@astforum.ru
+      EMAIL_FROM_NAME: АСТ Форум
       TZ: Europe/Moscow
     expose:
       - "3000"
