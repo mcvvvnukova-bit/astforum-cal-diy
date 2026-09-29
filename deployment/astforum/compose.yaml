@@ -57,6 +57,8 @@ services:
       EMAIL_SERVER: smtps://notifications%40astforum.ru:${CALDIY_SMTP_PASSWORD:?Set CALDIY_SMTP_PASSWORD}@astforum-stalwart:465/?tls.servername=mail.astforum.ru
       EMAIL_FROM: notifications@astforum.ru
       EMAIL_FROM_NAME: АСТ Форум
+      CRON_SECRET: ${CRON_SECRET:-}
+      BOOKING_REMINDER_EVENT_TYPE_IDS: ${BOOKING_REMINDER_EVENT_TYPE_IDS:-}
       TZ: Europe/Moscow
     expose:
       - "3000"
@@ -75,6 +77,24 @@ services:
       timeout: 10s
       retries: 10
       start_period: 90s
+
+  reminder-worker:
+    profiles: [reminders]
+    image: ${CALDIY_IMAGE:?Set CALDIY_IMAGE to a pinned fork build}
+    restart: unless-stopped
+    init: true
+    entrypoint: ["node", "/reminder-worker.mjs"]
+    healthcheck:
+      disable: true
+    environment:
+      CRON_SECRET: ${CRON_SECRET:-}
+    volumes:
+      - ./reminder-worker.mjs:/reminder-worker.mjs:ro
+    networks:
+      - backend
+    depends_on:
+      web:
+        condition: service_healthy
 
 volumes:
   postgres-data:

@@ -62,6 +62,17 @@ produce a working meeting URL. Verify this path through the authenticated
 booking confirmation API, then check the received attendee calendar attachment
 for `STATUS:CONFIRMED` and the expected UTC start/end times.
 
+## Scheduled booking reminders
+
+The optional `reminders` Compose profile runs the authenticated Tasker cron every
+10 seconds. Set the same `CRON_SECRET` for web and worker and explicitly allow event
+types with `BOOKING_REMINDER_EVENT_TYPE_IDS` (for example `3`). An empty allowlist
+disables reminders. Existing SMTP settings are reused; no database migration is needed.
+
+See [the reminder implementation and operating guide](../../docs/technical/booking-reminders.md)
+for timing, retries, ambiguous SMTP outcomes, diagnostics, and safe activation with
+the currently deployed web override. Source implementation does not imply production activation.
+
 ## Build
 
 Build the root Dockerfile for `linux/amd64`, using a temporary build database
