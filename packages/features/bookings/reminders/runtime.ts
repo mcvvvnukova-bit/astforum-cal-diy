@@ -30,7 +30,7 @@ export function configuredEventTypes(value = process.env.BOOKING_REMINDER_EVENT_
   const ids = value.split(",").map((id) => Number(id.trim()));
   if (ids.some((id) => !Number.isSafeInteger(id) || id <= 0))
     throw new Error("Invalid BOOKING_REMINDER_EVENT_TYPE_IDS");
-  return [...new Set(ids)];
+  return Array.from(new Set(ids));
 }
 
 /** Called by the existing authenticated Tasker cron. No Redis or new database schema is required. */

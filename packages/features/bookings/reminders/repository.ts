@@ -99,18 +99,28 @@ export class ReminderRepository implements ReminderStore {
   }
   async schedule(reminder: Reminder) {
     const referenceUid = reminderKey(reminder);
-    await this.db.task.upsert({
-      where: { referenceUid_type: { referenceUid, type: REMINDER_TYPE } },
-      update: {},
-      create: {
-        type: REMINDER_TYPE,
-        referenceUid,
-        payload: JSON.stringify({ ...reminder, state: "queued" }),
-        scheduledAt: new Date(reminder.dueAt),
-        maxAttempts: MAX_ATTEMPTS,
-      },
-      select: { id: true },
-    });
+    const where = { referenceUid_type: { referenceUid, type: REMINDER_TYPE } };
+    try {
+      await this.db.task.upsert({
+        where,
+        update: {},
+        create: {
+          type: REMINDER_TYPE,
+          referenceUid,
+          payload: JSON.stringify({ ...reminder, state: "queued" }),
+          scheduledAt: new Date(reminder.dueAt),
+          maxAttempts: MAX_ATTEMPTS,
+        },
+        select: { id: true },
+      });
+    } catch (error) {
+      // Prisma may race its read and insert; only the exact persisted duplicate is harmless.
+      if (error instanceof Error && "code" in error && error.code === "P2002") {
+        const existing = await this.db.task.findUnique({ where, select: { id: true } });
+        if (existing) return;
+      }
+      throw error;
+    }
   }
   async *activeTasks() {
     let cursor: string | undefined;
