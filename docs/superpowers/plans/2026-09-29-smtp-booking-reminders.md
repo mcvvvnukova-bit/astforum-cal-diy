@@ -59,7 +59,7 @@
 - [x] Fresh-context whole-change review: concurrency, post-SMTP crashes, late confirmation, cancellation races, opt-in boundaries, recipient privacy and observability.
 - [x] Fix actionable findings with a failing regression test followed by a passing test.
 - [x] Write exact settings, states, timing tolerance, retries, limitations, code revision and test results. Distinguish implemented source from production activation.
-- [ ] Insert only the technical section in Outline; reload, compare the surrounding content and inspect rendered state.
+- [x] Insert only the technical section in Outline; reload, compare the surrounding content and inspect rendered state.
 
 ## Review focus
 
@@ -68,3 +68,5 @@ SMTP and database commits are not atomic: verify no automatic duplicate after an
 ## Verification result
 
 51 targeted tests pass, including local SMTP and schema-backed Prismock tests. Scoped production TypeScript, worker syntax, Compose configuration and whitespace checks pass. The final reviewer reports no remaining important findings. Full image build, real PostgreSQL concurrency and production delivery are not yet verified.
+
+Published to the requested Outline section on 2026-09-30. After reload, the full editor text matched exactly (16,913 characters); the original prefix, seven template groups, seven technical subsections and three tables were preserved. Shell commands were published as separate single-line paragraphs to avoid rich-paste newline loss. Implementation commit: `042d518`.
