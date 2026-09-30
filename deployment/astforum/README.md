@@ -73,6 +73,10 @@ See [the reminder implementation and operating guide](../../docs/technical/booki
 for timing, retries, ambiguous SMTP outcomes, diagnostics, and safe activation with
 the currently deployed web override. Source implementation does not imply production activation.
 
+Production activation was verified on 2026-10-01 (Europe/Moscow) from source `8b6088261b096d94d0304512b2df4ea32d4cb8ed`, image `astforum/cal-diy:8b6088261b09`, for event type 3. Three actual worker-triggered reminders reached Gmail with SMTP 250; cancellation, rescheduling, late scheduling and duplicate suppression passed. See the [release evidence and rollback instructions](../../docs/technical/verification/2026-10-01-smtp-reminders.md).
+
+When starting web through `yarn start` / Turbo, keep `BOOKING_REMINDER_EVENT_TYPE_IDS` in `turbo.json.globalEnv`; setting only the container environment does not pass it through Turbo's strict filtering.
+
 ## Build
 
 Build the root Dockerfile for `linux/amd64`, using a temporary build database

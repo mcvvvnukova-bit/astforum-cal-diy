@@ -1,6 +1,6 @@
 # SMTP reminder deployment and delivery verification
 
-> **For agentic workers:** Execute the operational steps inline. The source implementation and design are already approved and committed; this request explicitly authorizes GitHub publication, VPS Forum deployment and test email to `mc.vvvnukova@gmail.com`.
+> **For agentic workers:** Execute the operational steps inline. The source implementation and design are already approved and committed; this request explicitly authorizes GitHub publication, VPS Forum deployment and test email to the explicitly authorized Gmail recipient.
 
 **Goal:** Publish `codex/smtp-booking-reminders`, deploy its source to VPS `forum-prod`, enable reminders for verified demo event type 3 and prove actual SMTP delivery.
 
@@ -27,19 +27,19 @@
 ## Task 2: Immutable build and real PostgreSQL verification
 
 - [x] Record production image, relevant event settings and release command.
-- [ ] Overlay the exact tracked source delta onto the pinned current image and build using a disposable PostgreSQL database.
-- [ ] Verify image labels, compiled cron route and production build/type check.
+- [x] Overlay the exact tracked source delta onto the pinned current image and build using a disposable PostgreSQL database.
+- [x] Verify image labels, compiled cron route and production build/type check.
 - [x] Exercise concurrent claims on a real PostgreSQL Task row with an isolated local SMTP receiver; assert one accepted message and one attempt.
 
 ## Task 3: Deployment and live delivery
 
-- [ ] Back up server-only environment, active Compose/override and production database.
-- [ ] Deploy the new source/Compose, preserve SMTP, enable verified event 3 and the internal worker using a shared generated cron secret.
-- [ ] Verify unauthorized cron returns 401 and authenticated POST works against the compiled production endpoint.
-- [ ] Create isolated accepted fixtures with future due times for all three reminder types and a cancelled fixture; let the real worker process them.
-- [ ] Verify persisted `smtp_accepted`, stable Message-ID and Stalwart/Gmail SMTP delivery evidence for each reminder; verify cancelled/late fixtures send nothing and a repeat cron does not duplicate messages.
-- [ ] Deactivate test fixtures, verify public booking/login and health, and compare neighboring container identities.
-- [ ] Record release/rollback instructions and evidence, commit the deployment record and push it to GitHub.
+- [x] Back up server-only environment, active Compose/override and production database.
+- [x] Deploy the new source/Compose, preserve SMTP, enable verified event 3 and the internal worker using a shared generated cron secret.
+- [x] Verify unauthorized cron returns 401 and authenticated POST works against the compiled production endpoint.
+- [x] Create isolated accepted fixtures with future due times for all three reminder types and a cancelled fixture; let the real worker process them.
+- [x] Verify persisted `smtp_accepted`, stable Message-ID and Stalwart/Gmail SMTP delivery evidence for each reminder; verify cancelled/late fixtures send nothing and a repeat cron does not duplicate messages.
+- [x] Deactivate test fixtures, verify public booking/login and health, and compare neighboring container identities.
+- [x] Record release/rollback instructions and evidence, commit the deployment record and push it to GitHub.
 
 ## Preflight evidence
 
@@ -49,5 +49,11 @@
 
 - Real PostgreSQL rejected concurrent `Task.upsert` calls with `P2002`. Prisma can perform a read followed by an insert for an empty-update upsert. The fix accepts only a verified existing row with the exact reminder key/type and propagates other errors. The original real-database concurrency harness failed; the fixed harness passed 20 concurrent schedules, 30 concurrent dispatches, exactly one SMTP message/attempt, no duplicate on repeat and no message after cancellation. A permanent opt-in regression test passes against disposable PostgreSQL.
 - The first production image compiled but failed its web TypeScript check because the web project targets ES5 and the allowlist used a spread over `Set`. `Array.from(new Set(ids))` retains behavior and passes the scoped check with `--target es5 --downlevelIteration false`.
-- After these fixes, all 51 ordinary tests pass and the additional PostgreSQL test passes separately. Biome reports no errors/warnings (15 informational suggestions); whitespace checks pass. Targeted review covered specific duplicate handling, preservation of terminal outcomes, authenticated activation, fixture isolation, privacy and resource cleanup; no release blockers remain in the code diff. Full image build and live delivery are still pending.
-- The full `e62aef0` image build and web TypeScript check passed. Activation revealed Turbo's strict environment filtering: the container had `BOOKING_REMINDER_EVENT_TYPE_IDS=3`, while the actual Next.js process lacked it and therefore scheduled no tasks. An actual Turbo child-process regression first printed `reminder-env:missing`, then passed after adding the variable to `turbo.json.globalEnv`. All 52 ordinary tests and the ES5 scoped TypeScript check pass. The first six test fixtures were cancelled; no reminder tasks/messages were created for them. The corrected runtime configuration will be added to a new immutable image built from the verified application image; recompiling unchanged application code is unnecessary.
+- After these fixes, all 51 ordinary tests pass and the additional PostgreSQL test passes separately. Biome reports no errors/warnings (15 informational suggestions); whitespace checks pass. Targeted review covered specific duplicate handling, preservation of terminal outcomes, authenticated activation, fixture isolation, privacy and resource cleanup; no release blockers remain in the code diff. Subsequent full-build and live-delivery results are recorded below.
+- The full `e62aef0` image build and web TypeScript check passed. Activation revealed Turbo's strict environment filtering: the container had `BOOKING_REMINDER_EVENT_TYPE_IDS=3`, while the actual Next.js process lacked it and therefore scheduled no tasks. An actual Turbo child-process regression first printed `reminder-env:missing`, then passed after adding the variable to `turbo.json.globalEnv`. All 52 ordinary tests and the ES5 scoped TypeScript check pass. The first six test fixtures were cancelled; no reminder tasks/messages were created for them. The corrected runtime configuration was added to the final immutable image built from the verified application image; application code is unchanged.
+
+## Final deployment verification
+
+Completed on 2026-10-01 Moscow time. Application source: `8b6088261b096d94d0304512b2df4ea32d4cb8ed`; active image `astforum/cal-diy:8b6088261b09`. The real worker delivered exactly three test reminders (24h, 60min, 15min) through Stalwart at 00:08:05 MSK; Gmail accepted all three with SMTP 250 at 00:08:06. Cancellation and rescheduling retired old tasks; a late confirmation produced no expired task. Repeated cron processing produced no duplicate. All twelve test bookings are cancelled, pending test reminders are skipped, the three original bookings and nineteen neighboring containers are unchanged. Web is healthy; worker runs without published ports. Public login/demo pages and adjacent sites returned HTTP 200; unauthenticated cron returned HTTP 401. Gmail folder placement is unverified.
+
+See [the release and rollback record](../../technical/verification/2026-10-01-smtp-reminders.md) and its sanitized JSON evidence. Stalwart INFO logs do not include Message-ID: expected message IDs and delivered queue IDs are recorded separately, with correlation by the three test-recipient submissions in the acceptance window.
