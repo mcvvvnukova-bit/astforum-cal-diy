@@ -98,24 +98,7 @@ export async function handleConfirmation(args: {
       metadata.conferenceData = results[0].createdEvent?.conferenceData;
       metadata.entryPoints = results[0].createdEvent?.entryPoints;
     }
-    try {
-      const isHostConfirmationEmailsDisabled =
-        eventTypeMetadata?.disableStandardEmails?.confirmation?.host || false;
-      const isAttendeeConfirmationEmailDisabled =
-        eventTypeMetadata?.disableStandardEmails?.confirmation?.attendee || false;
 
-      if (emailsEnabled) {
-        await sendScheduledEmailsAndSMS(
-          { ...evt, additionalInformation: metadata },
-          undefined,
-          isHostConfirmationEmailsDisabled,
-          isAttendeeConfirmationEmailDisabled,
-          eventTypeMetadata
-        );
-      }
-    } catch (error) {
-      tracingLogger.error(error);
-    }
   }
   let updatedBookings: {
     id: number;
@@ -240,8 +223,6 @@ export async function handleConfirmation(args: {
     const updatedBookingsResult = await Promise.all(updateBookingsPromise);
     updatedBookings = updatedBookings.concat(updatedBookingsResult);
   } else {
-    // @NOTE: be careful with this as if any error occurs before this booking doesn't get confirmed
-    // Should perform update on booking (confirm) -> then trigger the rest handlers
     const updatedBooking = await prisma.booking.update({
       where: {
         id: bookingId,
@@ -306,6 +287,27 @@ export async function handleConfirmation(args: {
         uid: booking.uid,
       },
     ];
+  }
+
+  // Manager acceptance is authoritative even if an external meeting could not be created.
+  // Notify only after acceptance is persisted, independently of integration results.
+  try {
+    const isHostConfirmationEmailsDisabled =
+      eventTypeMetadata?.disableStandardEmails?.confirmation?.host || false;
+    const isAttendeeConfirmationEmailDisabled =
+      eventTypeMetadata?.disableStandardEmails?.confirmation?.attendee || false;
+
+    if (emailsEnabled) {
+      await sendScheduledEmailsAndSMS(
+        { ...evt, additionalInformation: metadata },
+        undefined,
+        isHostConfirmationEmailsDisabled,
+        isAttendeeConfirmationEmailDisabled,
+        eventTypeMetadata
+      );
+    }
+  } catch (error) {
+    tracingLogger.error(error);
   }
 
   const triggerForUser = true;

@@ -1,0 +1,4 @@
+services:
+  web:
+    image: astforum/cal-diy:8b6088261b09
+    command: ["yarn", "start"]

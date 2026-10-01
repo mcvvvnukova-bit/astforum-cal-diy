@@ -1,13 +1,16 @@
+import { useDemoWidgetPresentation } from "@calcom/features/bookings/Booker/hooks/useDemoWidgetPresentation";
+import { useTimePreferences } from "@calcom/features/bookings/lib";
 import { useLocale } from "@calcom/lib/hooks/useLocale";
 import { TimeFormat } from "@calcom/lib/timeFormat";
 import { ToggleGroup } from "@calcom/ui/components/form";
-
-import { useTimePreferences } from "@calcom/features/bookings/lib";
 
 export const TimeFormatToggle = ({ customClassName }: { customClassName?: string }) => {
   const timeFormat = useTimePreferences((state) => state.timeFormat);
   const setTimeFormat = useTimePreferences((state) => state.setTimeFormat);
   const { t } = useLocale();
+  const isDemoWidgetPresentation = useDemoWidgetPresentation();
+
+  if (isDemoWidgetPresentation) return null;
 
   return (
     <ToggleGroup
