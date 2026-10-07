@@ -62,7 +62,9 @@ def snapshot(repo, revision=None):
         raise ValueError('Dirty snapshot; commit or remove task changes first')
     tracked = git('ls-tree', '-r', '--name-only', revision).splitlines()
     if any('/node_modules/' in f'/{p}/' or '/.next/' in f'/{p}/' or
-           (Path(p).name.startswith('.env') and not Path(p).name.endswith('.example')) for p in tracked):
+           (Path(p).name.startswith('.env') and not Path(p).name.endswith('.example') and
+            not (p == 'packages/lib/test/.env.test' or
+                 (p == 'packages/prisma/.env' and git('ls-tree', revision, p).startswith('120000 ')))) for p in tracked):
         raise ValueError('Snapshot contains dependencies, compiled output or private environment')
     for path in INPUTS:
         git('cat-file', '-e', f'{revision}:{path}')
@@ -107,6 +109,10 @@ def wait_ready(probe, attempts=90):
     raise RuntimeError('Readiness deadline exceeded')
 
 
+def context_member(member):
+    return not (Path(member.name).name.startswith('.env') and not member.name.endswith('.example'))
+
+
 def build(repo, output, source):
     started = datetime.now(timezone.utc).isoformat()
     owned = 'cal-clean-' + secrets.token_hex(6)
@@ -117,7 +123,6 @@ def build(repo, output, source):
     log = output / 'pipeline.log'
     def docker(*args, timeout=9000):
         return command(['docker', *map(str, args)], log=log, timeout=timeout)
-    versions = {}
     try:
         versions = {'docker': docker('version', '--format', '{{json .}}'),
                     'buildx': docker('buildx', 'version')}
@@ -129,10 +134,7 @@ def build(repo, output, source):
             command(['git', '-C', str(repo), 'archive', '--format=tar', '-o', str(archive),
                      source['revision'], *INPUTS])
             with tarfile.open(archive) as stream:
-                # The context has only selected tracked runtime/build inputs, not historical overlays.
-                members = [m for m in stream.getmembers() if not m.name.startswith(
-                    ('apps/web/.next/', 'deployment/astforum/release-tools/',
-                     'deployment/astforum/staging-tools/'))]
+                members = [m for m in stream.getmembers() if context_member(m)]
                 stream.extractall(context, members=members, filter='data')
             password, auth, encryption, cron = (secrets.token_hex(32) for _ in range(4))
             url = f'postgresql://build:{password}@{db}:5432/build_clean'

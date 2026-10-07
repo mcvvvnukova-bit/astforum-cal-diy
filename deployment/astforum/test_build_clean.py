@@ -4,6 +4,7 @@ import os
 from pathlib import Path
 import subprocess
 import tempfile
+import tarfile
 import unittest
 
 SCRIPT = Path(__file__).with_name('build-clean.py')
@@ -58,6 +59,25 @@ class CleanBuildTests(unittest.TestCase):
             self.git('-c', 'user.name=Test', '-c', 'user.email=test@example.test', 'commit', '-qm', 'unsafe')
             self.assertNotEqual(self.run_cli('--check').returncode, 0)
             self.assertFalse(self.out.exists())
+
+    def test_known_tracked_environment_is_excluded_from_context(self):
+        spec = importlib.util.spec_from_file_location('clean_build', SCRIPT)
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        self.assertFalse(module.context_member(tarfile.TarInfo('packages/prisma/.env')))
+        self.assertFalse(module.context_member(tarfile.TarInfo('packages/lib/test/.env.test')))
+        self.assertTrue(module.context_member(tarfile.TarInfo('apps/web/package.json')))
+        env_link = self.repo / 'packages/prisma/.env'
+        env_link.parent.mkdir(parents=True, exist_ok=True)
+        env_link.symlink_to('../../.env')
+        self.git('add', '.')
+        self.git('-c', 'user.name=Test', '-c', 'user.email=test@example.test', 'commit', '-qm', 'symlink')
+        self.assertEqual(self.run_cli('--check').returncode, 0)
+        env_link.unlink()
+        env_link.write_text('private')
+        self.git('add', '.')
+        self.git('-c', 'user.name=Test', '-c', 'user.email=test@example.test', 'commit', '-qm', 'private')
+        self.assertNotEqual(self.run_cli('--check').returncode, 0)
 
     def test_output_inside_repo_nonempty_or_symlink_is_rejected(self):
         self.out.mkdir()

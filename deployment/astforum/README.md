@@ -92,6 +92,9 @@ Only the full current HEAD is accepted. Commit all input changes first; dirty
 tracked or untracked files cause rejection. The context is a Git archive of
 selected application/build files, excluding historical deployment overlays.
 No host dependencies, `.next`, environment files or custom images are inherited.
+The existing tracked Prisma `.env` symlink and library test `.env.test` fixture
+are removed from the context without reading their contents; a regular Prisma
+`.env` file or any unknown private environment path causes rejection.
 Yarn performs an immutable install. Prisma, app-store and embedding artifacts
 are generated before the full Next build; Next type checking remains enabled
 and `yarn type-check:ci --force` is a separate required build gate.
