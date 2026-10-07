@@ -6,6 +6,8 @@ import json
 from fnmatch import fnmatchcase
 import os
 from pathlib import Path
+import signal
+import socket
 import subprocess
 import tempfile
 import tarfile
@@ -23,6 +25,7 @@ import os
 from pathlib import Path
 import sys
 import tarfile
+import time
 
 path = Path(os.environ['DOCKER_FAULT_STATE'])
 state = json.loads(path.read_text()) if path.exists() else {'container': [], 'network': [], 'builder': [], 'image': []}
@@ -30,6 +33,17 @@ args = sys.argv[1:]
 
 def save():
     path.write_text(json.dumps(state))
+
+phase = os.environ.get('DOCKER_HOLD_PHASE')
+if phase and not state.get('held') and (
+        (phase == 'logs' and args[0] == 'logs') or (phase == 'cleanup' and args[0] == 'rm')):
+    state['held'] = True
+    save()
+    Path(os.environ['DOCKER_HOLD_MARKER']).write_text(str(os.getpid()))
+    print('cleanup transport ready', flush=True)
+    time.sleep(0.5)
+    state['hold_finished'] = True
+    save()
 
 def fail(message):
     save()
@@ -46,6 +60,8 @@ def create(kind, name):
     save()
 
 def remove(kind, name):
+    state.setdefault('removals', []).append([kind, name])
+    save()
     if name not in state[kind]:
         fail('resource absent')
     if os.environ.get('DOCKER_FAULT_REMOVE') in (kind, name.rsplit('-', 1)[-1]):
@@ -71,6 +87,11 @@ elif args[:2] == ['buildx', 'build']:
     tag = args[args.index('--tag') + 1]
     if '--provenance=false' not in args or os.environ.get('BUILDX_METADATA_PROVENANCE') != 'max':
         fail('incompatible exporter/provenance contract')
+    db = next(name for name in state['container'] if name.endswith('-pg'))
+    if '--add-host' not in args or args[args.index('--add-host') + 1] != db + ':172.30.0.2':
+        fail('owned database host mapping absent')
+    if any(value.startswith('--network') or 'network.host' in value for value in args):
+        fail('default RUN network must remain isolated')
     state['tag'] = tag
     values = dict(args[i + 1].split('=', 1) for i, value in enumerate(args) if value == '--build-arg')
     state['labels'] = {
@@ -102,6 +123,9 @@ elif args[:2] == ['buildx', 'build']:
 elif args[0] == 'load':
     state['image'].append(state['tag'])
     save()
+elif args[0] == 'inspect':
+    print(json.dumps([{'Name': '/' + args[-1], 'NetworkSettings': {
+        'Networks': {state['network'][0]: {'IPAddress': '172.30.0.2'}}, 'Ports': {'5432/tcp': None}}}]))
 elif args[:2] == ['image', 'inspect']:
     if args[-1].startswith('postgres:'):
         print(json.dumps([{'RepoDigests': ['postgres@sha256:' + 'a' * 64]}]))
@@ -117,6 +141,8 @@ elif args[:2] in (['network', 'rm'], ['buildx', 'rm'], ['image', 'rm']):
 elif args[:2] in (['container', 'ls'], ['network', 'ls'], ['buildx', 'ls'], ['image', 'ls']):
     kind = {'container': 'container', 'network': 'network', 'buildx': 'builder', 'image': 'image'}[args[0]]
     print('\n'.join(state[kind]))
+elif args[0] == 'exec' and args[-2:] == ['cat', '/tmp/reminder-tests.json']:
+    print(json.dumps({'numFailedTests': 0, 'numPendingTests': 0, 'numTotalTests': 1}))
 elif args[0] not in ('exec', 'logs', 'network', 'run'):
     fail('unsupported fault transport command')
 """
@@ -135,7 +161,7 @@ class CleanBuildTests(unittest.TestCase):
                      'i18n.json', 'apps/fixture', 'packages/fixture', 'example-apps/fixture',
                      'scripts/fixture', 'biome.json', 'biome-staged.json', 'LICENSE',
                      'deployment/astforum/start.sh', 'deployment/astforum/Dockerfile.clean',
-                     'deployment/astforum/reminder-worker.mjs'):
+                     'deployment/astforum/reminder-worker.mjs', 'deployment/astforum/check-build-database.mjs'):
             path = self.repo / name
             path.parent.mkdir(parents=True, exist_ok=True)
             path.write_text('fixture\n')
@@ -144,8 +170,85 @@ class CleanBuildTests(unittest.TestCase):
         self.sha = self.git('rev-parse', 'HEAD').strip()
         self.out = self.root / 'output'
 
+    def test_build_database_preflight_connects_only_to_expected_address_without_credentials(self):
+        script = SCRIPT.with_name('check-build-database.mjs')
+        with socket.socket() as server:
+            server.bind(('127.0.0.1', 0)); server.listen()
+            port = server.getsockname()[1]
+            env = {**os.environ, 'DATABASE_URL': f'postgresql://build:probe-private@127.0.0.1:{port}/build_clean',
+                   'BUILD_DATABASE_IP': '127.0.0.1'}
+            result = subprocess.run(['node', str(script)], env=env, capture_output=True, text=True, timeout=10)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            server.settimeout(1)
+            client, _ = server.accept(); client.close()
+            self.assertIn('TCP accepted', result.stdout)
+            self.assertNotIn('probe-private', result.stdout + result.stderr)
+            env['BUILD_DATABASE_IP'] = '192.0.2.1'
+            denied = subprocess.run(['node', str(script)], env=env, capture_output=True, text=True, timeout=10)
+            self.assertNotEqual(denied.returncode, 0)
+            self.assertNotIn('probe-private', denied.stdout + denied.stderr)
+            with self.assertRaises(socket.timeout):
+                server.accept()
+        env['BUILD_DATABASE_IP'] = '127.0.0.1'
+        refused = subprocess.run(['node', str(script)], env=env, capture_output=True, text=True, timeout=10)
+        self.assertNotEqual(refused.returncode, 0)
+
+    def test_build_database_address_is_bound_to_exact_owned_network_and_container(self):
+        module = importlib.util.module_from_spec(importlib.util.spec_from_file_location('clean_build', SCRIPT))
+        module.__spec__.loader.exec_module(module)
+        db, network = 'cal-clean-test-pg', 'cal-clean-test-build'
+        inspected = {'Name': '/' + db, 'NetworkSettings': {
+            'Networks': {network: {'IPAddress': '172.30.0.2'}}, 'Ports': {'5432/tcp': None}}}
+        self.assertEqual(module.build_database_ip(inspected, db, network), '172.30.0.2')
+        for altered in ({**inspected, 'Name': '/foreign-pg'},
+                        {**inspected, 'NetworkSettings': {'Networks': {'foreign': {'IPAddress': '172.30.0.2'}}}},
+                        {**inspected, 'NetworkSettings': {'Networks': {network: {'IPAddress': ''}}}},
+                        {**inspected, 'NetworkSettings': {'Networks': {network: {'IPAddress': '8.8.8.8'}}}},
+                        {**inspected, 'NetworkSettings': {**inspected['NetworkSettings'], 'Ports': {'5432/tcp': [{}]}}}):
+            with self.subTest(altered=altered), self.assertRaises(ValueError):
+                module.build_database_ip(altered, db, network)
+
     def git(self, *args):
         return subprocess.check_output(['git', '-C', str(self.repo), *args], text=True)
+
+    def test_start_runs_git_nonexecutable_helpers_and_stops_before_web_on_init_failure(self):
+        context = self.root / 'startup'
+        context.mkdir()
+        tracked = subprocess.check_output(['git', '-C', str(SCRIPT.parents[2]), 'archive', 'HEAD',
+                                           'scripts/replace-placeholder.sh', 'scripts/wait-for-it.sh'])
+        with tarfile.open(fileobj=io.BytesIO(tracked)) as archive:
+            archive.extractall(context, filter='data')
+        for helper in (context / 'scripts').iterdir():
+            self.assertFalse(helper.stat().st_mode & 0o111)
+        bin_dir = context / 'node_modules/.bin'
+        bin_dir.mkdir(parents=True)
+        for name, arguments, marker in (
+                ('nc', '-w 1 -z owned-db 5432', 'database'),
+                ('prisma', 'migrate deploy --schema packages/prisma/schema.prisma', 'migration'),
+                ('ts-node', '--transpile-only scripts/seed-app-store.ts', 'seed'),
+                ('yarn', 'start', 'web')):
+            stub = bin_dir / name
+            stub.write_text(f'#!/bin/sh\n[ "$*" = "{arguments}" ] || exit 19\n'
+                            f'echo {marker} >> "$START_TRACE"\n'
+                            f'[ "${{START_FAILURE:-}}" != "{marker}" ] || exit 23\n')
+            stub.chmod(0o755)
+        start = SCRIPT.with_name('start.sh').read_text()
+        # Keep the real startup commands; only relocate its fixed container working directory.
+        self.assertEqual(start.count('cd /calcom\n'), 1)
+        start = start.replace('cd /calcom\n', '')
+        trace = context / 'trace'
+        for failure, expected in (('', ['database', 'migration', 'seed', 'web']),
+                                  ('migration', ['database', 'migration']),
+                                  ('seed', ['database', 'migration', 'seed'])):
+            with self.subTest(failure=failure):
+                trace.unlink(missing_ok=True)
+                result = subprocess.run(['sh', '-c', start], cwd=context, capture_output=True, text=True,
+                                        timeout=5, env={**os.environ, 'PATH': str(bin_dir) + ':' + os.environ['PATH'],
+                                        'DATABASE_HOST': 'owned-db:5432', 'BUILT_NEXT_PUBLIC_WEBAPP_URL': 'same',
+                                        'NEXT_PUBLIC_WEBAPP_URL': 'same', 'START_TRACE': str(trace),
+                                        'START_FAILURE': failure})
+                self.assertEqual(result.returncode, 23 if failure else 0, result.stderr)
+                self.assertEqual(trace.read_text().splitlines(), expected)
 
     def run_cli(self, *args, env=None):
         return subprocess.run([os.sys.executable, str(SCRIPT), str(self.out),
@@ -191,6 +294,129 @@ class CleanBuildTests(unittest.TestCase):
                             "import time; print('partial',flush=True); time.sleep(10)"],
                            log=log, timeout=0.2)
         self.assertEqual(log.read_bytes(), b'partial\n')
+
+    def test_sigterm_during_selector_wait_fails_closed_and_kills_descendants(self):
+        self.assert_sigterm_cancels_build(readiness=False)
+
+    def test_sigterm_during_readiness_is_not_retried(self):
+        self.assert_sigterm_cancels_build(readiness=True)
+
+    def assert_sigterm_cancels_build(self, readiness):
+        release, pids = self.root / 'release', self.root / 'pids.json'
+        ready, survived = self.root / 'descendant-ready', self.root / 'survived'
+        descendant = (f"from pathlib import Path; import time; Path({str(ready)!r}).touch(); "
+                      f"time.sleep(0.8); Path({str(survived)!r}).touch(); time.sleep(10)")
+        child = f"""
+import json, os, subprocess, time
+from pathlib import Path
+descendant = subprocess.Popen([{os.sys.executable!r}, '-c', {descendant!r}])
+Path({str(pids)!r}).write_text(json.dumps([os.getpid(), descendant.pid]))
+while not Path({str(ready)!r}).exists(): time.sleep(0.01)
+print('held command ready', flush=True)
+while not Path({str(release)!r}).exists(): time.sleep(0.01)
+descendant.terminate()
+descendant.wait()
+"""
+        caller = f"""
+import importlib.util, sys
+from pathlib import Path
+spec = importlib.util.spec_from_file_location('clean_build', {str(SCRIPT)!r})
+module = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(module)
+def held_build(repo, output, source):
+    attempts = 0
+    def probe():
+        nonlocal attempts
+        attempts += 1
+        if attempts > 1:
+            (output / 'retried').touch()
+            return
+        module.command([{os.sys.executable!r}, '-c', {child!r}],
+                       log=output / 'pipeline.log', timeout=10)
+    try:
+        module.wait_ready(probe, attempts=2) if {readiness!r} else probe()
+        return {{'source': source}}
+    finally:
+        (output / 'cleanup-invoked').touch()
+module.build = held_build
+sys.argv = [{str(SCRIPT)!r}, {str(self.out)!r}, '--repo', {str(self.repo)!r}]
+module.main()
+"""
+        with subprocess.Popen([os.sys.executable, '-c', caller], stdout=subprocess.PIPE,
+                              stderr=subprocess.PIPE) as process:
+            cancelled = False
+            try:
+                deadline = time.monotonic() + 3
+                log = self.out / 'pipeline.log'
+                while time.monotonic() < deadline and not (
+                        log.exists() and b'held command ready' in log.read_bytes()):
+                    time.sleep(0.01)
+                self.assertIsNone(process.poll())
+                self.assertTrue(log.exists() and b'held command ready' in log.read_bytes())
+                # The child holds both pipe writers open without producing further bytes.
+                time.sleep(0.1)
+                process.send_signal(signal.SIGTERM)
+                try:
+                    stdout, stderr = process.communicate(timeout=1.5)
+                    cancelled = True
+                except subprocess.TimeoutExpired:
+                    release.touch()
+                    stdout, stderr = process.communicate(timeout=4)
+                states = {pid: subprocess.run(['ps', '-o', 'stat=', '-p', str(pid)],
+                          capture_output=True, text=True).stdout.strip() for pid in json.loads(pids.read_text())}
+            finally:
+                if process.poll() is None:
+                    process.kill()
+                    process.communicate(timeout=3)
+                if pids.exists():
+                    try:
+                        os.killpg(json.loads(pids.read_text())[0], signal.SIGKILL)
+                    except ProcessLookupError:
+                        pass
+            self.assertTrue(cancelled, f'SIGTERM did not stop the CLI promptly: rc={process.returncode}, '
+                            f'success={(self.out / "release-receipt.json").exists()}')
+            self.assertNotEqual(process.returncode, 0, stderr)
+            self.assertTrue((self.out / 'cleanup-invoked').exists())
+            self.assertFalse((self.out / 'retried').exists())
+            self.assertFalse((self.out / 'release-receipt.json').exists())
+            self.assertIn('interrupted', json.loads((self.out / 'failure.json').read_text())['error'])
+            self.assertEqual(log.read_bytes(), b'held command ready\n')
+            self.assertFalse(survived.exists(), 'Descendant continued executing after cancellation')
+            for pid, state in states.items():
+                self.assertTrue(not state or state.startswith('Z'), f'Owned process {pid} still runs: {state}')
+
+    def test_command_deadline_remains_bounded_after_output_eof(self):
+        pid_path, log = self.root / 'eof-pid', self.root / 'eof.log'
+        child = (f"import os,time; from pathlib import Path; Path({str(pid_path)!r}).write_text(str(os.getpid())); "
+                 "print('before eof',flush=True); os.close(1); os.close(2); time.sleep(10)")
+        caller = f"""
+import runpy
+module = runpy.run_path({str(SCRIPT)!r})
+try:
+    module['command']([{os.sys.executable!r}, '-c', {child!r}], log={str(log)!r}, timeout=0.3)
+except RuntimeError as error:
+    print(error)
+else:
+    raise AssertionError('Expected elapsed deadline after EOF')
+"""
+        started = time.monotonic()
+        with subprocess.Popen([os.sys.executable, '-c', caller], stdout=subprocess.PIPE,
+                              stderr=subprocess.PIPE) as process:
+            try:
+                stdout, stderr = process.communicate(timeout=2)
+            finally:
+                if pid_path.exists():
+                    try:
+                        os.killpg(int(pid_path.read_text()), signal.SIGKILL)
+                    except ProcessLookupError:
+                        pass
+                if process.poll() is None:
+                    process.kill()
+                    process.communicate(timeout=3)
+        self.assertEqual(process.returncode, 0, stderr)
+        self.assertLess(time.monotonic() - started, 2)
+        self.assertIn(b'exceeded', stdout)
+        self.assertEqual(log.read_bytes(), b'before eof\n')
 
     def test_dirty_and_invalid_revisions_fail_closed(self):
         for revision in ('not-a-revision', 'HEAD', 'f' * 40):
@@ -249,18 +475,88 @@ class CleanBuildTests(unittest.TestCase):
         self.assertFalse((self.out / 'release-receipt.json').exists())
         self.assertTrue((self.out / 'failure.json').exists())
 
-    def fault_cli(self, create, before=False, remove=''):
+    def fault_cli(self, create, before=False, remove='', cancel_phase=''):
         bin_dir = self.root / 'fault-bin'
         bin_dir.mkdir(exist_ok=True)
         docker = bin_dir / 'docker'
         docker.write_text('#!' + os.sys.executable + '\n' + FAKE_DOCKER)
         docker.chmod(0o700)
         state_path = self.root / 'docker-state.json'
-        result = self.run_cli(env={**os.environ, 'PATH': str(bin_dir) + os.pathsep + os.environ['PATH'],
+        marker = self.root / 'cleanup-held'
+        marker.unlink(missing_ok=True)
+        env = {**os.environ, 'PATH': str(bin_dir) + os.pathsep + os.environ['PATH'],
                                   'DOCKER_FAULT_STATE': str(state_path), 'DOCKER_FAULT_CREATE': create,
                                   'DOCKER_FAULT_BEFORE': '1' if before else '0',
-                                  'DOCKER_FAULT_REMOVE': remove})
+                                  'DOCKER_FAULT_REMOVE': remove, 'DOCKER_HOLD_PHASE': cancel_phase,
+                                  'DOCKER_HOLD_MARKER': str(marker)}
+        if not cancel_phase:
+            result = self.run_cli(env=env)
+        else:
+            args = [os.sys.executable, str(SCRIPT), str(self.out), '--repo', str(self.repo)]
+            with subprocess.Popen(args, env=env, stdout=subprocess.PIPE, stderr=subprocess.PIPE) as process:
+                try:
+                    deadline = time.monotonic() + 5
+                    while not marker.exists() and time.monotonic() < deadline:
+                        time.sleep(0.01)
+                    self.assertTrue(marker.exists(), 'Actual build did not reach held finally transport')
+                    time.sleep(0.1)
+                    process.send_signal(signal.SIGTERM)
+                    stdout, stderr = process.communicate(timeout=5)
+                    result = subprocess.CompletedProcess(args, process.returncode, stdout.decode(), stderr.decode())
+                finally:
+                    if process.poll() is None:
+                        process.kill()
+                        process.communicate(timeout=3)
+                    if marker.exists():
+                        try:
+                            os.killpg(int(marker.read_text()), signal.SIGKILL)
+                        except ProcessLookupError:
+                            pass
         return result, json.loads(state_path.read_text())
+
+    def test_sigterm_during_actual_finally_preserves_all_owned_removals(self):
+        for create in ('', 'pg'):
+            for phase in ('logs', 'cleanup'):
+                with self.subTest(create=create, phase=phase):
+                    self.out = self.root / f'cancel-{create}-{phase}'
+                    (self.root / 'docker-state.json').unlink(missing_ok=True)
+                    result, state = self.fault_cli(create, cancel_phase=phase)
+                    self.assertNotEqual(result.returncode, 0, result.stderr)
+                    self.assertTrue(state.get('hold_finished'), 'Cancellation interrupted active owned cleanup')
+                    self.assertEqual({key: state[key] for key in ('container', 'network', 'builder', 'image')},
+                                     {'container': [], 'network': [], 'builder': [], 'image': []})
+                    self.assertEqual(len(state['removals']), 3 if create else 7)
+                    self.assertIn('interrupted', (self.out / 'failure.json').read_text())
+                    self.assertFalse((self.out / 'release-receipt.json').exists())
+
+    def test_actual_cleanup_normal_success_and_removal_error_controls(self):
+        for remove in ('', 'web'):
+            with self.subTest(remove=remove):
+                self.out = self.root / ('cleanup-control-' + remove)
+                (self.root / 'docker-state.json').unlink(missing_ok=True)
+                result, state = self.fault_cli('', remove=remove)
+                self.assertEqual(len(state['removals']), 7)
+                self.assertEqual(result.returncode, 1 if remove else 0, result.stderr)
+                self.assertEqual(len(state['container']), 1 if remove else 0)
+                self.assertEqual([state[key] for key in ('network', 'builder', 'image')], [[], [], []])
+                if remove:
+                    self.assertIn('cleanup failed', (self.out / 'failure.json').read_text())
+                    self.assertFalse((self.out / 'release-receipt.json').exists())
+                else:
+                    self.assertTrue(json.loads((self.out / 'release-receipt.json').read_text())['cleanup'])
+                    self.assertFalse((self.out / 'failure.json').exists())
+
+    def test_actual_cleanup_cancellation_preserves_removal_failure_evidence(self):
+        result, state = self.fault_cli('', remove='web', cancel_phase='cleanup')
+        self.assertNotEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(len(state.get('removals', [])), 7)
+        self.assertEqual(len(state['container']), 1)
+        self.assertTrue(state['container'][0].endswith('-web'))
+        self.assertEqual([state[key] for key in ('network', 'builder', 'image')], [[], [], []])
+        self.assertIn('interrupted', (self.out / 'failure.json').read_text())
+        self.assertIn('cleanup failed', (self.out / 'failure.json').read_text())
+        self.assertIn('failed', (self.out / 'cleanup.log').read_text())
+        self.assertFalse((self.out / 'release-receipt.json').exists())
 
     def test_partial_creation_failure_cleans_every_registered_owned_resource(self):
         for kind in ('network', 'pg', 'builder', 'worker', 'smtp', 'migrate', 'web'):
@@ -317,6 +613,8 @@ class CleanBuildTests(unittest.TestCase):
 
     def test_dependent_candidate_branch_triggers_push_verification(self):
         self.assertTrue(self.workflow_push_matches('yarn.lock', 'codex/PROJ-153-cal-diy-image-verification-fixes'))
+        self.assertTrue(self.workflow_push_matches('deployment/astforum/Dockerfile.clean',
+                                                  'codex/PROJ-153-cal-diy-build-network'))
 
     def test_receipt_rejects_identity_mismatch_or_failed_runtime(self):
         spec = importlib.util.spec_from_file_location('clean_build', SCRIPT)

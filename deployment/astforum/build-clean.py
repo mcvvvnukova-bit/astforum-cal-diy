@@ -4,6 +4,7 @@ import argparse
 import base64
 from datetime import datetime, timezone
 import hashlib
+import ipaddress
 import json
 import os
 from pathlib import Path
@@ -25,7 +26,12 @@ NODE_MATERIAL_DIGESTS = {BASE.rsplit('sha256:', 1)[1],
 CHECKS = ('image', 'credentials', 'worker', 'login', 'cron', 'reminders')
 INPUTS = ('package.json', 'yarn.lock', '.yarnrc.yml', '.yarn', 'turbo.json', 'i18n.json',
           'apps', 'packages', 'example-apps', 'scripts', 'biome.json', 'biome-staged.json', 'LICENSE', 'deployment/astforum/start.sh',
-          'deployment/astforum/reminder-worker.mjs', 'deployment/astforum/Dockerfile.clean')
+          'deployment/astforum/reminder-worker.mjs', 'deployment/astforum/Dockerfile.clean',
+          'deployment/astforum/check-build-database.mjs')
+
+
+class BuildCancelled(Exception):
+    """Escape selector EINTR handling and readiness retries on cancellation."""
 
 
 def command(args, cwd=None, log=None, timeout=9000, live=False):
@@ -164,6 +170,23 @@ def archive_identity(archive, manifest_id):
     return config_id
 
 
+def build_database_ip(inspection, db, network):
+    settings = inspection.get('NetworkSettings', {})
+    networks = settings.get('Networks', {})
+    if (not db.startswith('cal-clean-') or not network.startswith('cal-clean-') or
+            inspection.get('Name') != '/' + db or set(networks) != {network} or
+            any(settings.get('Ports', {}).values())):
+        raise ValueError('Database is not isolated on the exact owned build network')
+    try:
+        address = ipaddress.IPv4Address(networks[network].get('IPAddress', ''))
+    except ipaddress.AddressValueError as error:
+        raise ValueError('Missing or invalid owned database IPv4') from error
+    if (not address.is_private or address.is_loopback or address.is_link_local or
+            address.is_multicast or address.is_unspecified):
+        raise ValueError('Database address is not a private build address')
+    return str(address)
+
+
 def wait_ready(probe, attempts=90):
     for _ in range(attempts):
         try:
@@ -246,6 +269,9 @@ def build(repo, output, source):
                    '-e', f'POSTGRES_PASSWORD={password}', POSTGRES)
             postgres_id = json.loads(docker('image', 'inspect', POSTGRES))[0]['RepoDigests']
             wait_ready(lambda: docker('exec', db, 'pg_isready', '-U', 'build', '-d', 'build_clean', timeout=15))
+            database_ip = build_database_ip(json.loads(docker('inspect', db))[0], db, network)
+            with build_secret.open('a') as stream:
+                stream.write(f'BUILD_DATABASE_IP={database_ip}\n')
             cleanup.append(('builder', builder))
             docker('buildx', 'create', '--name', builder, '--driver', 'docker-container',
                    '--driver-opt', f'network={network}')
@@ -255,6 +281,7 @@ def build(repo, output, source):
                     '--no-cache', '--provenance=false', '--tag', image,
                     '--output', f'type=docker,dest={image_archive}',
                     '--metadata-file', str(metadata_path), '--secret', f'id=build_env,src={build_secret}',
+                    '--add-host', f'{db}:{database_ip}',
                     '--file', str(context / 'deployment/astforum/Dockerfile.clean')]
             for key, value in [('VCS_REF', source['revision']), ('SOURCE_TREE', source['tree']),
                                ('LOCK_SHA256', source['lock_sha256']),
@@ -282,7 +309,7 @@ def build(repo, output, source):
                     image_id not in (config_id, exported_digest)):
                 raise ValueError('BuildKit/archive/loaded image identity mismatch')
             config_bytes = json.dumps(inspection['Config']).encode()
-            if any(value.encode() in config_bytes for value in (password, auth, encryption, cron)):
+            if any(value.encode() in config_bytes for value in (password, auth, encryption, cron, database_ip)):
                 raise ValueError('Persisted build credentials in image configuration')
             verification = {'image': True, 'credentials': True}
             cleanup.append(('container', worker))
@@ -330,20 +357,34 @@ def build(repo, output, source):
             validate_receipt(receipt, source)
             return receipt
     finally:
-        for name in (db, web, smtp):
-            try:
-                command(['docker', 'logs', name], log=output / f'{name}.log', timeout=30)
-            except (RuntimeError, OSError, subprocess.TimeoutExpired):
-                pass
-        for kind, name in reversed(cleanup):
-            try:
-                cleanup_owned(kind, name, output / 'cleanup.log')
-            except (RuntimeError, OSError, subprocess.TimeoutExpired) as error:
-                cleanup_errors.append(str(error))
-                with (output / 'cleanup.log').open('a') as stream:
-                    stream.write(str(error) + '\n')
-        if cleanup_errors:
-            raise RuntimeError('Owned resource cleanup failed; inspect cleanup.log')
+        cancelled = isinstance(sys.exc_info()[1], BuildCancelled)
+        def defer_cancellation(signum, frame):
+            nonlocal cancelled
+            cancelled = True
+        # Finish bounded owned cleanup before propagating cancellation to the receipt boundary.
+        previous_handler = signal.signal(signal.SIGTERM, defer_cancellation)
+        try:
+            for name in (db, web, smtp):
+                try:
+                    command(['docker', 'logs', name], log=output / f'{name}.log', timeout=30)
+                except (RuntimeError, OSError, subprocess.TimeoutExpired):
+                    pass
+            for kind, name in reversed(cleanup):
+                try:
+                    cleanup_owned(kind, name, output / 'cleanup.log')
+                except (RuntimeError, OSError, subprocess.TimeoutExpired) as error:
+                    cleanup_errors.append(str(error))
+                    with (output / 'cleanup.log').open('a') as stream:
+                        stream.write(str(error) + '\n')
+            if cleanup_errors:
+                raise RuntimeError('Owned resource cleanup failed; inspect cleanup.log')
+        finally:
+            signal.signal(signal.SIGTERM, previous_handler)
+            if cancelled:
+                message = 'Build interrupted'
+                if cleanup_errors:
+                    message += '; Owned resource cleanup failed; inspect cleanup.log'
+                raise BuildCancelled(message)
 
 
 def main():
@@ -354,7 +395,7 @@ def main():
     parser.add_argument('--check', action='store_true')
     args = parser.parse_args()
     def interrupted(signum, frame):
-        raise InterruptedError('Build interrupted')
+        raise BuildCancelled('Build interrupted')
     signal.signal(signal.SIGTERM, interrupted)
     initialized = False
     try:

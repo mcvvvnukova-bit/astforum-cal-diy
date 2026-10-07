@@ -5,6 +5,7 @@ on:
     branches:
       - codex/PROJ-153-cal-diy-image-provenance
       - codex/PROJ-153-cal-diy-image-verification-fixes
+      - codex/PROJ-153-cal-diy-build-network
     paths:
       - 'apps/**'
       - 'packages/**'

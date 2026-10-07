@@ -6,6 +6,9 @@ ARG VCS_REF
 ENV NEXT_PUBLIC_WEBAPP_URL=https://cal.astforum.ru CALCOM_TELEMETRY_DISABLED=1 NEXT_TELEMETRY_DISABLED=1 HUSKY=0 NODE_OPTIONS=--max-old-space-size=6144
 RUN --mount=type=secret,id=build_env,required=true \
     set -eu; set -a; . /run/secrets/build_env; set +a; \
+    node deployment/astforum/check-build-database.mjs
+RUN --mount=type=secret,id=build_env,required=true \
+    set -eu; set -a; . /run/secrets/build_env; set +a; \
     node .yarn/releases/yarn-4.12.0.cjs install --immutable
 RUN --mount=type=secret,id=build_env,required=true \
     set -eu; set -a; . /run/secrets/build_env; set +a; \

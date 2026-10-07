@@ -92,6 +92,11 @@ Only the full current HEAD is accepted. Commit all input changes first; dirty
 tracked or untracked files cause rejection. The context is a Git archive of
 selected application/build files, excluding historical deployment overlays.
 No host dependencies, `.next`, environment files or custom images are inherited.
+BuildKit RUN commands retain their default sandbox network. A temporary hosts
+mapping points only the generated PostgreSQL name at its IPv4 on the owned build
+bridge; the pipeline rejects foreign/missing addresses and published ports.
+A secret-mounted expected address gates a Node DNS/TCP preflight before install.
+The mapping expires with the private builder and is not a runtime setting.
 The existing tracked Prisma `.env` symlink and library test `.env.test` fixture
 are removed from the context without reading their contents; a regular Prisma
 `.env` file or any unknown private environment path causes rejection.
