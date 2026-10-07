@@ -1,13 +1,126 @@
 import importlib.util
+import base64
+import hashlib
+import io
 import json
+from fnmatch import fnmatchcase
 import os
 from pathlib import Path
 import subprocess
 import tempfile
 import tarfile
+import time
 import unittest
 
 SCRIPT = Path(__file__).with_name('build-clean.py')
+
+FAKE_DOCKER = r"""
+import base64
+import hashlib
+import io
+import json
+import os
+from pathlib import Path
+import sys
+import tarfile
+
+path = Path(os.environ['DOCKER_FAULT_STATE'])
+state = json.loads(path.read_text()) if path.exists() else {'container': [], 'network': [], 'builder': [], 'image': []}
+args = sys.argv[1:]
+
+def save():
+    path.write_text(json.dumps(state))
+
+def fail(message):
+    save()
+    print(message, file=sys.stderr)
+    sys.exit(17)
+
+def create(kind, name):
+    matches = os.environ.get('DOCKER_FAULT_CREATE') in (kind, name.rsplit('-', 1)[-1])
+    if matches and os.environ.get('DOCKER_FAULT_BEFORE') == '1':
+        fail('injected failure before creation')
+    state[kind].append(name)
+    if matches:
+        fail('injected start failure after daemon creation')
+    save()
+
+def remove(kind, name):
+    if name not in state[kind]:
+        fail('resource absent')
+    if os.environ.get('DOCKER_FAULT_REMOVE') in (kind, name.rsplit('-', 1)[-1]):
+        fail('injected genuine removal failure')
+    state[kind].remove(name)
+    save()
+
+if args[0] == 'version' or args[:2] == ['buildx', 'version']:
+    print('fault-injection transport')
+elif args[:2] == ['network', 'create']:
+    create('network', args[-1])
+elif args[0] == 'run' and '--name' in args:
+    name = args[args.index('--name') + 1]
+    create('container', name)
+    if '--rm' in args:
+        state['container'].remove(name)
+        save()
+    if args[-1] == '/reminder-worker.mjs':
+        print('fixture')
+elif args[:2] == ['buildx', 'create']:
+    create('builder', args[args.index('--name') + 1])
+elif args[:2] == ['buildx', 'build']:
+    tag = args[args.index('--tag') + 1]
+    if '--provenance=false' not in args or os.environ.get('BUILDX_METADATA_PROVENANCE') != 'max':
+        fail('incompatible exporter/provenance contract')
+    state['tag'] = tag
+    values = dict(args[i + 1].split('=', 1) for i, value in enumerate(args) if value == '--build-arg')
+    state['labels'] = {
+        'org.opencontainers.image.source': 'https://github.com/mcvvvnukova-bit/astforum-cal-diy',
+        'org.opencontainers.image.revision': values['VCS_REF'], 'org.opencontainers.image.licenses': 'MIT',
+        'ru.astforum.source.tree': values['SOURCE_TREE'], 'ru.astforum.lock.sha256': values['LOCK_SHA256'],
+        'ru.astforum.dockerfile.sha256': values['DOCKERFILE_SHA256']}
+    config = json.dumps({'os': 'linux', 'architecture': 'amd64', 'config': {'Labels': state['labels']}}).encode()
+    state['config_id'] = 'sha256:' + hashlib.sha256(config).hexdigest()
+    raw = json.dumps({'config': {'digest': state['config_id']}}).encode()
+    manifest_id = 'sha256:' + hashlib.sha256(raw).hexdigest()
+    config_path = 'blobs/sha256/' + state['config_id'].split(':')[1]
+    archive = Path(args[args.index('--output') + 1].split('dest=', 1)[1])
+    with tarfile.open(archive, 'w') as stream:
+        for name, data in [('manifest.json', json.dumps([{'Config': config_path}]).encode()),
+                           (config_path, config), ('blobs/sha256/' + manifest_id.split(':')[1], raw)]:
+            member = tarfile.TarInfo(name); member.size = len(data)
+            stream.addfile(member, io.BytesIO(data))
+    recipe = Path(args[args.index('--file') + 1]).read_bytes()
+    Path(args[args.index('--metadata-file') + 1]).write_text(json.dumps({
+        'containerimage.config.digest': state['config_id'], 'containerimage.digest': manifest_id,
+        'buildx.build.provenance': {'buildType': 'https://mobyproject.org/buildkit@v1',
+            'buildConfig': {'llbDefinition': [{'id': 'step0'}]},
+            'materials': [{'uri': 'pkg:docker/node@24.18.1-bookworm', 'digest': {'sha256':
+                '87362b5d965240a1bc79f85cec63179d4ee853741413b274a4721f2742eb8393'}}],
+            'metadata': {'https://mobyproject.org/buildkit@v1#metadata': {'source': {'infos': [
+                {'filename': 'Dockerfile.clean', 'data': base64.b64encode(recipe).decode()}]}}}}}))
+    save()
+elif args[0] == 'load':
+    state['image'].append(state['tag'])
+    save()
+elif args[:2] == ['image', 'inspect']:
+    if args[-1].startswith('postgres:'):
+        print(json.dumps([{'RepoDigests': ['postgres@sha256:' + 'a' * 64]}]))
+    else:
+        print(json.dumps([{'Id': state['config_id'], 'Os': 'linux', 'Architecture': 'amd64',
+                           'Config': {'Labels': state['labels'], 'Env': []}}]))
+elif args[0] == 'run' and args[-1] == '/reminder-worker.mjs':
+    print('fixture')
+elif args[0] == 'rm':
+    remove('container', args[-1])
+elif args[:2] in (['network', 'rm'], ['buildx', 'rm'], ['image', 'rm']):
+    remove({'network': 'network', 'buildx': 'builder', 'image': 'image'}[args[0]], args[-1])
+elif args[:2] in (['container', 'ls'], ['network', 'ls'], ['buildx', 'ls'], ['image', 'ls']):
+    kind = {'container': 'container', 'network': 'network', 'buildx': 'builder', 'image': 'image'}[args[0]]
+    print('\n'.join(state[kind]))
+elif args[0] not in ('exec', 'logs', 'network', 'run'):
+    fail('unsupported fault transport command')
+"""
+
 
 
 class CleanBuildTests(unittest.TestCase):
@@ -42,6 +155,42 @@ class CleanBuildTests(unittest.TestCase):
         result = self.run_cli('--check')
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertFalse(self.out.exists())
+
+    def test_command_preserves_progress_before_subprocess_exits(self):
+        log, release, console = self.root / 'live.log', self.root / 'release', self.root / 'console.log'
+        child = "import pathlib,time; print('progress',flush=True); " + \
+                f"p=pathlib.Path({str(release)!r}); " + \
+                "exec('while not p.exists(): time.sleep(0.02)'); print('finished',flush=True)"
+        caller = f"import runpy; m=runpy.run_path({str(SCRIPT)!r}); " + \
+                 f"m['command']([{os.sys.executable!r},'-c',{child!r}],log={str(log)!r},timeout=8,live=True)"
+        with console.open('wb') as stream, subprocess.Popen(
+                [os.sys.executable, '-c', caller], stdout=stream, stderr=subprocess.PIPE) as process:
+            try:
+                deadline = time.monotonic() + 3
+                while time.monotonic() < deadline and not (
+                        log.exists() and b'progress' in log.read_bytes() and b'progress' in console.read_bytes()):
+                    time.sleep(0.02)
+                self.assertIsNone(process.poll())
+                self.assertTrue(log.exists() and b'progress' in log.read_bytes(),
+                                'Progress must be durable while the subprocess is still running')
+                self.assertIn(b'progress', console.read_bytes(), 'CI console progress must also be live')
+            finally:
+                release.touch()
+                stdout, stderr = process.communicate(timeout=10)
+        self.assertEqual(process.returncode, 0, stderr)
+        self.assertEqual(log.read_bytes(), b'progress\nfinished\n')
+        self.assertEqual(console.read_bytes(), b'progress\nfinished\n')
+
+    def test_command_timeout_preserves_partial_output(self):
+        spec = importlib.util.spec_from_file_location('clean_build', SCRIPT)
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        log = self.root / 'timeout.log'
+        with self.assertRaisesRegex(RuntimeError, 'exceeded'):
+            module.command([os.sys.executable, '-c',
+                            "import time; print('partial',flush=True); time.sleep(10)"],
+                           log=log, timeout=0.2)
+        self.assertEqual(log.read_bytes(), b'partial\n')
 
     def test_dirty_and_invalid_revisions_fail_closed(self):
         for revision in ('not-a-revision', 'HEAD', 'f' * 40):
@@ -100,23 +249,147 @@ class CleanBuildTests(unittest.TestCase):
         self.assertFalse((self.out / 'release-receipt.json').exists())
         self.assertTrue((self.out / 'failure.json').exists())
 
+    def fault_cli(self, create, before=False, remove=''):
+        bin_dir = self.root / 'fault-bin'
+        bin_dir.mkdir(exist_ok=True)
+        docker = bin_dir / 'docker'
+        docker.write_text('#!' + os.sys.executable + '\n' + FAKE_DOCKER)
+        docker.chmod(0o700)
+        state_path = self.root / 'docker-state.json'
+        result = self.run_cli(env={**os.environ, 'PATH': str(bin_dir) + os.pathsep + os.environ['PATH'],
+                                  'DOCKER_FAULT_STATE': str(state_path), 'DOCKER_FAULT_CREATE': create,
+                                  'DOCKER_FAULT_BEFORE': '1' if before else '0',
+                                  'DOCKER_FAULT_REMOVE': remove})
+        return result, json.loads(state_path.read_text())
+
+    def test_partial_creation_failure_cleans_every_registered_owned_resource(self):
+        for kind in ('network', 'pg', 'builder', 'worker', 'smtp', 'migrate', 'web'):
+            with self.subTest(kind=kind):
+                self.out = self.root / ('output-' + kind)
+                (self.root / 'docker-state.json').unlink(missing_ok=True)
+                result, state = self.fault_cli(kind)
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIn('start failure after daemon creation', (self.out / 'pipeline.log').read_text())
+                self.assertFalse((self.out / 'release-receipt.json').exists())
+                self.assertTrue((self.out / 'failure.json').exists())
+                self.assertEqual({key: state[key] for key in ('container', 'network', 'builder', 'image')},
+                                 {'container': [], 'network': [], 'builder': [], 'image': []})
+                self.out = self.root / ('output-' + kind)
+                (self.root / 'docker-state.json').unlink()
+
+    def test_absent_resource_is_clean_but_real_removal_failure_remains_fail_closed(self):
+        result, state = self.fault_cli('pg', before=True)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertNotIn('cleanup failed', (self.out / 'failure.json').read_text())
+        self.assertEqual(state['network'], [])
+        self.out = self.root / 'removal-failure'
+        (self.root / 'docker-state.json').unlink()
+        result, state = self.fault_cli('web', remove='web')
+        self.assertNotEqual(result.returncode, 0)
+        self.assertEqual(len(state['container']), 1)
+        self.assertTrue(state['container'][0].endswith('-web'))
+        self.assertIn('cleanup failed', (self.out / 'failure.json').read_text())
+        self.assertFalse((self.out / 'release-receipt.json').exists())
+
+    def workflow_push_matches(self, changed_path, branch):
+        lines = (SCRIPT.parents[2] / '.github/workflows/astforum-image.yml').read_text().splitlines()
+        filters, section = {'branches': [], 'paths': []}, None
+        for line in lines:
+            if line.startswith('    branches:') or line.startswith('    paths:'):
+                section, value = line.strip().split(':', 1)
+                if value.strip():
+                    filters[section] = [item.strip().strip("\"'") for item in value.strip()[1:-1].split(',')]
+            elif line.startswith('      - ') and section:
+                filters[section].append(line.strip()[2:].strip("\"'"))
+            elif line and not line.startswith('      '):
+                section = None
+        return (any(fnmatchcase(branch, pattern) for pattern in filters['branches']) and
+                any(fnmatchcase(changed_path, pattern) for pattern in filters['paths']))
+
+    def test_push_of_every_consumed_context_root_triggers_candidate(self):
+        spec = importlib.util.spec_from_file_location('clean_build', SCRIPT)
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        for root in module.INPUTS:
+            changed_path = root + '/nested/changed-source.ts' if (SCRIPT.parents[2] / root).is_dir() else root
+            with self.subTest(changed_path=changed_path):
+                self.assertTrue(self.workflow_push_matches(changed_path, 'codex/PROJ-153-cal-diy-image-provenance'))
+
+    def test_dependent_candidate_branch_triggers_push_verification(self):
+        self.assertTrue(self.workflow_push_matches('yarn.lock', 'codex/PROJ-153-cal-diy-image-verification-fixes'))
+
     def test_receipt_rejects_identity_mismatch_or_failed_runtime(self):
         spec = importlib.util.spec_from_file_location('clean_build', SCRIPT)
         module = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(module)
         source = {'revision': self.sha, 'tree': 'a' * 40}
-        receipt = {'source': source, 'image_id': 'sha256:' + 'b' * 64,
+        receipt = {'source': source, 'actual_image_id': 'sha256:' + 'b' * 64,
+                   'metadata_sha256': 'e' * 64,
+                   'image_config_id': 'sha256:' + 'b' * 64,
+                   'exported_image_digest': 'sha256:' + 'd' * 64,
                    'archive_config_id': 'sha256:' + 'b' * 64,
                    'platform': 'linux/amd64',
                    'verification': {key: True for key in module.CHECKS}}
         module.validate_receipt(receipt, source)
+        containerd = {**receipt, 'actual_image_id': receipt['exported_image_digest']}
+        module.validate_receipt(containerd, source)
         for field, bad in [('source', {'revision': 'c' * 40}),
                            ('archive_config_id', 'sha256:' + 'c' * 64),
+                           ('actual_image_id', 'sha256:' + 'c' * 64),
+                           ('metadata_sha256', ''),
                            ('verification', {key: False for key in module.CHECKS})]:
             altered = json.loads(json.dumps(receipt))
             altered[field] = bad
             with self.assertRaises(ValueError):
                 module.validate_receipt(altered, source)
+
+    def test_max_record_requires_exact_recipe_and_pinned_node_material(self):
+        module = importlib.util.module_from_spec(importlib.util.spec_from_file_location('clean_build', SCRIPT))
+        module.__spec__.loader.exec_module(module)
+        record = {'buildType': 'https://mobyproject.org/buildkit@v1',
+                  'buildConfig': {'llbDefinition': [{'id': 'step0'}]},
+                  'materials': [{'uri': 'pkg:docker/node@24.18.1-bookworm', 'digest': {'sha256':
+                      '87362b5d965240a1bc79f85cec63179d4ee853741413b274a4721f2742eb8393'}}],
+                  'metadata': {'https://mobyproject.org/buildkit@v1#metadata': {'source': {'infos': [
+                      {'filename': 'Dockerfile.clean', 'data': base64.b64encode(b'fixture\n').decode()}]}}}}
+        source = {'dockerfile_sha256': hashlib.sha256(b'fixture\n').hexdigest()}
+        module.validate_provenance({'buildx.build.provenance': record}, source)
+        for field, value in [('buildConfig', {}), ('materials', []), ('metadata', {})]:
+            with self.subTest(field=field), self.assertRaises(ValueError):
+                module.validate_provenance({'buildx.build.provenance': {**record, field: value}}, source)
+        with self.assertRaises(ValueError):
+            module.validate_provenance({'buildx.build.provenance': record}, {'dockerfile_sha256': '0' * 64})
+        changed = {**record, 'materials': [{'uri': 'pkg:docker/node@24.18.1-bookworm',
+                                          'digest': {'sha256': '0' * 64}}]}
+        with self.assertRaises(ValueError):
+            module.validate_provenance({'buildx.build.provenance': changed}, source)
+
+    def test_exported_manifest_config_are_verified_from_actual_archive_bytes(self):
+        module = importlib.util.module_from_spec(importlib.util.spec_from_file_location('clean_build', SCRIPT))
+        module.__spec__.loader.exec_module(module)
+        config = b'{"architecture":"amd64","os":"linux"}'
+        config_id = 'sha256:' + hashlib.sha256(config).hexdigest()
+        manifest = json.dumps({'config': {'digest': config_id}}).encode()
+        manifest_id = 'sha256:' + hashlib.sha256(manifest).hexdigest()
+        archive = self.root / 'candidate.tar'
+        config_path = 'blobs/sha256/' + config_id.split(':')[1]
+        with tarfile.open(archive, 'w') as stream:
+            for name, data in [('manifest.json', json.dumps([{'Config': config_path}]).encode()),
+                               (config_path, config), ('blobs/sha256/' + manifest_id.split(':')[1], manifest)]:
+                member = tarfile.TarInfo(name); member.size = len(data)
+                stream.addfile(member, io.BytesIO(data))
+        self.assertEqual(module.archive_identity(archive, manifest_id), config_id)
+        with self.assertRaises((ValueError, KeyError)):
+            module.archive_identity(archive, 'sha256:' + '0' * 64)
+        original = archive.read_bytes()
+        for path in (config_path, 'blobs/sha256/' + manifest_id.split(':')[1]):
+            with self.subTest(corrupt=path):
+                archive.write_bytes(original)
+                with tarfile.open(archive, 'a') as stream:
+                    member = tarfile.TarInfo(path); member.size = 2
+                    stream.addfile(member, io.BytesIO(b'{}'))
+                with self.assertRaises(ValueError):
+                    module.archive_identity(archive, manifest_id)
 
 
 if __name__ == '__main__':

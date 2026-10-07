@@ -122,9 +122,17 @@ Success creates `candidate.docker.tar`, `buildkit-metadata.json` (including
 BuildKit provenance), logs and `release-receipt.json`. The receipt records full
 source SHA/tree, Dockerfile/lock/worker hashes, base/platform, actual image ID,
 export digest, archive hash/config identity, build times and observed checks.
-The archive config is checked against the verified image before success.
-The Docker archive retains a loadable local candidate; BuildKit provenance is
-retained separately because the local Docker exporter cannot retain attestations.
+The archive comes directly from BuildKit and those same bytes are explicitly
+loaded for runtime verification. The exported manifest and config digests are
+checked against actual archive blobs. `actual_image_id` must equal the config
+digest on classic stores or the exported manifest digest on containerd stores;
+`image_config_id` and `archive_config_id` must always match.
+The Docker exporter disables embedded attestations for compatibility. Full
+`BUILDX_METADATA_PROVENANCE=max` build-record provenance is retained separately:
+the pipeline requires the Git Dockerfile hash, full LLB recipe and pinned Node
+material digest. The receipt includes the metadata SHA256 and explicit record
+format/mode. Keep metadata, receipt and archive together. This does not claim an
+embedded or signed attestation.
 Failure preserves logs and `failure.json` and never emits a success receipt.
 Owned temporary containers, networks, builder, secrets and image tag are removed;
 cleanup failure also prevents success. Load the archive with `docker load -i`
