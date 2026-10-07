@@ -6,6 +6,7 @@ from pathlib import Path
 import subprocess
 import tempfile
 import tarfile
+import time
 import unittest
 
 SCRIPT = Path(__file__).with_name('build-clean.py')
@@ -125,6 +126,42 @@ class CleanBuildTests(unittest.TestCase):
         result = self.run_cli('--check')
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertFalse(self.out.exists())
+
+    def test_command_preserves_progress_before_subprocess_exits(self):
+        log, release, console = self.root / 'live.log', self.root / 'release', self.root / 'console.log'
+        child = "import pathlib,time; print('progress',flush=True); " + \
+                f"p=pathlib.Path({str(release)!r}); " + \
+                "exec('while not p.exists(): time.sleep(0.02)'); print('finished',flush=True)"
+        caller = f"import runpy; m=runpy.run_path({str(SCRIPT)!r}); " + \
+                 f"m['command']([{os.sys.executable!r},'-c',{child!r}],log={str(log)!r},timeout=8,live=True)"
+        with console.open('wb') as stream, subprocess.Popen(
+                [os.sys.executable, '-c', caller], stdout=stream, stderr=subprocess.PIPE) as process:
+            try:
+                deadline = time.monotonic() + 3
+                while time.monotonic() < deadline and not (
+                        log.exists() and b'progress' in log.read_bytes() and b'progress' in console.read_bytes()):
+                    time.sleep(0.02)
+                self.assertIsNone(process.poll())
+                self.assertTrue(log.exists() and b'progress' in log.read_bytes(),
+                                'Progress must be durable while the subprocess is still running')
+                self.assertIn(b'progress', console.read_bytes(), 'CI console progress must also be live')
+            finally:
+                release.touch()
+                stdout, stderr = process.communicate(timeout=10)
+        self.assertEqual(process.returncode, 0, stderr)
+        self.assertEqual(log.read_bytes(), b'progress\nfinished\n')
+        self.assertEqual(console.read_bytes(), b'progress\nfinished\n')
+
+    def test_command_timeout_preserves_partial_output(self):
+        spec = importlib.util.spec_from_file_location('clean_build', SCRIPT)
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        log = self.root / 'timeout.log'
+        with self.assertRaisesRegex(RuntimeError, 'exceeded'):
+            module.command([os.sys.executable, '-c',
+                            "import time; print('partial',flush=True); time.sleep(10)"],
+                           log=log, timeout=0.2)
+        self.assertEqual(log.read_bytes(), b'partial\n')
 
     def test_dirty_and_invalid_revisions_fail_closed(self):
         for revision in ('not-a-revision', 'HEAD', 'f' * 40):

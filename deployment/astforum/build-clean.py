@@ -8,8 +8,10 @@ import os
 from pathlib import Path
 import re
 import secrets
+import selectors
 import signal
 import subprocess
+import sys
 import tarfile
 import tempfile
 import time
@@ -23,21 +25,43 @@ INPUTS = ('package.json', 'yarn.lock', '.yarnrc.yml', '.yarn', 'turbo.json', 'i1
           'deployment/astforum/reminder-worker.mjs', 'deployment/astforum/Dockerfile.clean')
 
 
-def command(args, cwd=None, log=None, timeout=9000):
-    try:
-        result = subprocess.run(args, cwd=cwd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
-                                timeout=timeout)
-    except subprocess.TimeoutExpired as error:
-        if log:
-            with Path(log).open('ab') as stream:
-                stream.write(error.output or b'')
-        raise RuntimeError(f'{args[0:3]} exceeded {timeout}s; inspect logs') from error
-    if log:
-        with Path(log).open('ab') as stream:
-            stream.write(result.stdout)
-    if result.returncode:
-        raise RuntimeError(f'{args[0:3]} failed ({result.returncode}); inspect preserved logs')
-    return result.stdout.decode()
+def command(args, cwd=None, log=None, timeout=9000, live=False):
+    output = bytearray()
+    deadline = time.monotonic() + timeout
+    with subprocess.Popen(args, cwd=cwd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                          start_new_session=True) as process, selectors.DefaultSelector() as selector:
+        selector.register(process.stdout, selectors.EVENT_READ)
+        try:
+            while selector.get_map():
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    raise RuntimeError(f'{args[0:3]} exceeded {timeout}s; inspect logs')
+                for key, _ in selector.select(min(remaining, 1)):
+                    chunk = os.read(key.fd, 65536)
+                    if not chunk:
+                        selector.unregister(key.fileobj)
+                        continue
+                    output.extend(chunk)
+                    if log:
+                        with Path(log).open('ab') as stream:
+                            stream.write(chunk)
+                    if live:
+                        sys.stdout.buffer.write(chunk)
+                        sys.stdout.buffer.flush()
+            try:
+                returncode = process.wait(timeout=max(0, deadline - time.monotonic()))
+            except subprocess.TimeoutExpired as error:
+                raise RuntimeError(f'{args[0:3]} exceeded {timeout}s; inspect logs') from error
+        except BaseException:
+            try:
+                os.killpg(process.pid, signal.SIGKILL)
+            except ProcessLookupError:
+                pass
+            process.wait()
+            raise
+    if returncode:
+        raise RuntimeError(f'{args[0:3]} failed ({returncode}); inspect preserved logs')
+    return output.decode()
 
 
 def digest(data):
@@ -143,8 +167,8 @@ def build(repo, output, source):
     cleanup = []
     cleanup_errors = []
     log = output / 'pipeline.log'
-    def docker(*args, timeout=9000):
-        return command(['docker', *map(str, args)], log=log, timeout=timeout)
+    def docker(*args, timeout=9000, live=False):
+        return command(['docker', *map(str, args)], log=log, timeout=timeout, live=live)
     try:
         versions = {'docker': docker('version', '--format', '{{json .}}'),
                     'buildx': docker('buildx', 'version')}
@@ -194,7 +218,7 @@ def build(repo, output, source):
                                ('DOCKERFILE_SHA256', source['dockerfile_sha256'])]:
                 args += ['--build-arg', f'{key}={value}']
             cleanup.append(('image', image))
-            docker(*args, context)
+            docker(*args, '--progress=plain', context, live=True)
             inspection = json.loads(docker('image', 'inspect', image))[0]
             image_id = inspection['Id']
             labels = inspection['Config']['Labels']

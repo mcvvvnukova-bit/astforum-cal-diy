@@ -30,8 +30,11 @@ jobs:
     timeout-minutes: 180
     env:
       PYTHONDONTWRITEBYTECODE: 1
-      OUTPUT: ${{ runner.temp }}/cal-clean-${{ github.run_id }}-${{ github.run_attempt }}
     steps:
+      - run: |
+          echo "OUTPUT=$RUNNER_TEMP/cal-clean-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT" >> "$GITHUB_ENV"
+          df -h "$RUNNER_TEMP"
+          free -h
       - uses: actions/checkout@v4
         with:
           ref: ${{ github.sha }}
