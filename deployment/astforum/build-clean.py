@@ -113,11 +113,33 @@ def context_member(member):
     return not (Path(member.name).name.startswith('.env') and not member.name.endswith('.example'))
 
 
+def cleanup_owned(kind, name, log):
+    if not name.startswith('cal-clean-'):
+        raise ValueError('Refusing cleanup of a resource not owned by this pipeline')
+    inventory, removal = {
+        'container': (['container', 'ls', '-a', '--format', '{{.Names}}'], ['rm', '-fv']),
+        'network': (['network', 'ls', '--format', '{{.Name}}'], ['network', 'rm']),
+        'builder': (['buildx', 'ls', '--format', '{{.Name}}'], ['buildx', 'rm']),
+        'image': (['image', 'ls', '--format', '{{.Repository}}:{{.Tag}}'], ['image', 'rm']),
+    }[kind]
+    def exists():
+        names = command(['docker', *inventory], log=log, timeout=30).splitlines()
+        return name in {value.strip().rstrip('*') for value in names}
+    if not exists():
+        return
+    try:
+        command(['docker', *removal, name], log=log, timeout=120)
+    except RuntimeError:
+        if exists():
+            raise
+
+
 def build(repo, output, source):
     started = datetime.now(timezone.utc).isoformat()
     owned = 'cal-clean-' + secrets.token_hex(6)
     network, runtime_network, builder = owned + '-build', owned + '-test', owned + '-builder'
     db, web, smtp, image = owned + '-pg', owned + '-web', owned + '-smtp', owned + ':candidate'
+    worker, migration = owned + '-worker', owned + '-migrate'
     cleanup = []
     cleanup_errors = []
     log = output / 'pipeline.log'
@@ -151,17 +173,17 @@ def build(repo, output, source):
                 path.write_text(''.join(f'{k}={v}\n' for k, v in values.items()))
                 path.chmod(0o600)
             for name, flags in ((network, ()), (runtime_network, ('--internal',))):
+                cleanup.append(('network', name))
                 docker('network', 'create', *flags, name)
-                cleanup.append(('network', 'rm', name))
+            cleanup.append(('container', db))
             docker('run', '-d', '--name', db, '--network', network,
                    '-e', 'POSTGRES_USER=build', '-e', 'POSTGRES_DB=build_clean',
                    '-e', f'POSTGRES_PASSWORD={password}', POSTGRES)
-            cleanup.append(('rm', '-fv', db))
             postgres_id = json.loads(docker('image', 'inspect', POSTGRES))[0]['RepoDigests']
             wait_ready(lambda: docker('exec', db, 'pg_isready', '-U', 'build', '-d', 'build_clean', timeout=15))
+            cleanup.append(('builder', builder))
             docker('buildx', 'create', '--name', builder, '--driver', 'docker-container',
                    '--driver-opt', f'network={network}')
-            cleanup.append(('buildx', 'rm', builder))
             metadata_path = output / 'buildkit-metadata.json'
             args = ['buildx', 'build', '--builder', builder, '--platform', PLATFORM, '--pull',
                     '--no-cache', '--provenance=mode=max', '--load', '--tag', image,
@@ -171,7 +193,7 @@ def build(repo, output, source):
                                ('LOCK_SHA256', source['lock_sha256']),
                                ('DOCKERFILE_SHA256', source['dockerfile_sha256'])]:
                 args += ['--build-arg', f'{key}={value}']
-            cleanup.append(('image', 'rm', image))
+            cleanup.append(('image', image))
             docker(*args, context)
             inspection = json.loads(docker('image', 'inspect', image))[0]
             image_id = inspection['Id']
@@ -193,21 +215,23 @@ def build(repo, output, source):
             if any(value.encode() in config_bytes for value in (password, auth, encryption, cron)):
                 raise ValueError('Persisted build credentials in image configuration')
             verification = {'image': True, 'credentials': True}
-            worker = docker('run', '--rm', '--network', 'none', '--entrypoint', 'cat', image, '/reminder-worker.mjs')
-            if digest(worker.encode()) != source['worker_sha256']:
+            cleanup.append(('container', worker))
+            worker_bytes = docker('run', '--rm', '--name', worker, '--network', 'none', '--entrypoint', 'cat', image, '/reminder-worker.mjs')
+            if digest(worker_bytes.encode()) != source['worker_sha256']:
                 raise ValueError('Image worker differs from Git source')
             verification['worker'] = True
             docker('network', 'disconnect', network, db)
             docker('network', 'connect', runtime_network, db)
             smtp_code = "require('net').createServer(s=>{s.write('220 local ESMTP\\r\\n');s.on('data',b=>s.write(b.toString().startsWith('DATA')?'354 data\\r\\n':'250 OK\\r\\n'))}).listen(1025,'0.0.0.0')"
+            cleanup.append(('container', smtp))
             docker('run', '-d', '--name', smtp, '--network', runtime_network,
                    '--entrypoint', 'node', image, '-e', smtp_code)
-            cleanup.append(('rm', '-fv', smtp))
-            run = ['run', '--rm', '--network', runtime_network, '--env-file', str(runtime_env)]
+            cleanup.append(('container', migration))
+            run = ['run', '--rm', '--name', migration, '--network', runtime_network, '--env-file', str(runtime_env)]
             docker(*run, '--entrypoint', 'yarn', image, 'prisma', 'migrate', 'deploy')
+            cleanup.append(('container', web))
             docker('run', '-d', '--name', web, '--network', runtime_network,
                    '--env-file', runtime_env, image)
-            cleanup.append(('rm', '-fv', web))
             login = "fetch('http://localhost:3000/auth/login',{signal:AbortSignal.timeout(5000)}).then(async r=>{if(r.status!==200||!(await r.text()).includes('Sign'))process.exit(1)})"
             wait_ready(lambda: docker('exec', web, 'node', '-e', login, timeout=15))
             verification['login'] = True
@@ -242,9 +266,9 @@ def build(repo, output, source):
                 command(['docker', 'logs', name], log=output / f'{name}.log', timeout=30)
             except (RuntimeError, OSError, subprocess.TimeoutExpired):
                 pass
-        for args in reversed(cleanup):
+        for kind, name in reversed(cleanup):
             try:
-                command(['docker', *args], log=output / 'cleanup.log', timeout=120)
+                cleanup_owned(kind, name, output / 'cleanup.log')
             except (RuntimeError, OSError, subprocess.TimeoutExpired) as error:
                 cleanup_errors.append(str(error))
                 with (output / 'cleanup.log').open('a') as stream:

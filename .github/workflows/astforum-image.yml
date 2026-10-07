@@ -2,10 +2,16 @@ name: AST Forum clean image
 on:
   workflow_dispatch:
   push:
-    branches: [codex/PROJ-153-cal-diy-image-provenance]
+    branches:
+      - codex/PROJ-153-cal-diy-image-provenance
+      - codex/PROJ-153-cal-diy-image-verification-fixes
     paths:
       - 'apps/**'
       - 'packages/**'
+      - 'example-apps/**'
+      - 'biome.json'
+      - 'biome-staged.json'
+      - 'LICENSE'
       - 'scripts/**'
       - '.yarn/**'
       - '.yarnrc.yml'

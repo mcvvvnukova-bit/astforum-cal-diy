@@ -1,5 +1,6 @@
 import importlib.util
 import json
+from fnmatch import fnmatchcase
 import os
 from pathlib import Path
 import subprocess
@@ -8,6 +9,88 @@ import tarfile
 import unittest
 
 SCRIPT = Path(__file__).with_name('build-clean.py')
+
+FAKE_DOCKER = r"""
+import json
+import os
+from pathlib import Path
+import sys
+
+path = Path(os.environ['DOCKER_FAULT_STATE'])
+state = json.loads(path.read_text()) if path.exists() else {'container': [], 'network': [], 'builder': [], 'image': []}
+args = sys.argv[1:]
+
+def save():
+    path.write_text(json.dumps(state))
+
+def fail(message):
+    save()
+    print(message, file=sys.stderr)
+    sys.exit(17)
+
+def create(kind, name):
+    matches = os.environ.get('DOCKER_FAULT_CREATE') in (kind, name.rsplit('-', 1)[-1])
+    if matches and os.environ.get('DOCKER_FAULT_BEFORE') == '1':
+        fail('injected failure before creation')
+    state[kind].append(name)
+    if matches:
+        fail('injected start failure after daemon creation')
+    save()
+
+def remove(kind, name):
+    if name not in state[kind]:
+        fail('resource absent')
+    if os.environ.get('DOCKER_FAULT_REMOVE') in (kind, name.rsplit('-', 1)[-1]):
+        fail('injected genuine removal failure')
+    state[kind].remove(name)
+    save()
+
+if args[0] == 'version' or args[:2] == ['buildx', 'version']:
+    print('fault-injection transport')
+elif args[:2] == ['network', 'create']:
+    create('network', args[-1])
+elif args[0] == 'run' and '--name' in args:
+    name = args[args.index('--name') + 1]
+    create('container', name)
+    if '--rm' in args:
+        state['container'].remove(name)
+        save()
+    if args[-1] == '/reminder-worker.mjs':
+        print('fixture')
+elif args[:2] == ['buildx', 'create']:
+    create('builder', args[args.index('--name') + 1])
+elif args[:2] == ['buildx', 'build']:
+    tag = args[args.index('--tag') + 1]
+    state['image'].append(tag)
+    values = dict(args[i + 1].split('=', 1) for i, value in enumerate(args) if value == '--build-arg')
+    state['labels'] = {
+        'org.opencontainers.image.source': 'https://github.com/mcvvvnukova-bit/astforum-cal-diy',
+        'org.opencontainers.image.revision': values['VCS_REF'], 'org.opencontainers.image.licenses': 'MIT',
+        'ru.astforum.source.tree': values['SOURCE_TREE'], 'ru.astforum.lock.sha256': values['LOCK_SHA256'],
+        'ru.astforum.dockerfile.sha256': values['DOCKERFILE_SHA256']}
+    Path(args[args.index('--metadata-file') + 1]).write_text(json.dumps({
+        'containerimage.config.digest': 'sha256:' + 'b' * 64,
+        'containerimage.digest': 'sha256:' + 'c' * 64}))
+    save()
+elif args[:2] == ['image', 'inspect']:
+    if args[-1].startswith('postgres:'):
+        print(json.dumps([{'RepoDigests': ['postgres@sha256:' + 'a' * 64]}]))
+    else:
+        print(json.dumps([{'Id': 'sha256:' + 'b' * 64, 'Os': 'linux', 'Architecture': 'amd64',
+                           'Config': {'Labels': state['labels'], 'Env': []}}]))
+elif args[0] == 'run' and args[-1] == '/reminder-worker.mjs':
+    print('fixture')
+elif args[0] == 'rm':
+    remove('container', args[-1])
+elif args[:2] in (['network', 'rm'], ['buildx', 'rm'], ['image', 'rm']):
+    remove({'network': 'network', 'buildx': 'builder', 'image': 'image'}[args[0]], args[-1])
+elif args[:2] in (['container', 'ls'], ['network', 'ls'], ['buildx', 'ls'], ['image', 'ls']):
+    kind = {'container': 'container', 'network': 'network', 'buildx': 'builder', 'image': 'image'}[args[0]]
+    print('\n'.join(state[kind]))
+elif args[0] not in ('exec', 'logs', 'network', 'run'):
+    fail('unsupported fault transport command')
+"""
+
 
 
 class CleanBuildTests(unittest.TestCase):
@@ -99,6 +182,75 @@ class CleanBuildTests(unittest.TestCase):
         self.assertNotEqual(result.returncode, 0)
         self.assertFalse((self.out / 'release-receipt.json').exists())
         self.assertTrue((self.out / 'failure.json').exists())
+
+    def fault_cli(self, create, before=False, remove=''):
+        bin_dir = self.root / 'fault-bin'
+        bin_dir.mkdir(exist_ok=True)
+        docker = bin_dir / 'docker'
+        docker.write_text('#!' + os.sys.executable + '\n' + FAKE_DOCKER)
+        docker.chmod(0o700)
+        state_path = self.root / 'docker-state.json'
+        result = self.run_cli(env={**os.environ, 'PATH': str(bin_dir) + os.pathsep + os.environ['PATH'],
+                                  'DOCKER_FAULT_STATE': str(state_path), 'DOCKER_FAULT_CREATE': create,
+                                  'DOCKER_FAULT_BEFORE': '1' if before else '0',
+                                  'DOCKER_FAULT_REMOVE': remove})
+        return result, json.loads(state_path.read_text())
+
+    def test_partial_creation_failure_cleans_every_registered_owned_resource(self):
+        for kind in ('network', 'pg', 'builder', 'worker', 'smtp', 'migrate', 'web'):
+            with self.subTest(kind=kind):
+                self.out = self.root / ('output-' + kind)
+                (self.root / 'docker-state.json').unlink(missing_ok=True)
+                result, state = self.fault_cli(kind)
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIn('start failure after daemon creation', (self.out / 'pipeline.log').read_text())
+                self.assertFalse((self.out / 'release-receipt.json').exists())
+                self.assertTrue((self.out / 'failure.json').exists())
+                self.assertEqual({key: state[key] for key in ('container', 'network', 'builder', 'image')},
+                                 {'container': [], 'network': [], 'builder': [], 'image': []})
+                self.out = self.root / ('output-' + kind)
+                (self.root / 'docker-state.json').unlink()
+
+    def test_absent_resource_is_clean_but_real_removal_failure_remains_fail_closed(self):
+        result, state = self.fault_cli('pg', before=True)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertNotIn('cleanup failed', (self.out / 'failure.json').read_text())
+        self.assertEqual(state['network'], [])
+        self.out = self.root / 'removal-failure'
+        (self.root / 'docker-state.json').unlink()
+        result, state = self.fault_cli('web', remove='web')
+        self.assertNotEqual(result.returncode, 0)
+        self.assertEqual(len(state['container']), 1)
+        self.assertTrue(state['container'][0].endswith('-web'))
+        self.assertIn('cleanup failed', (self.out / 'failure.json').read_text())
+        self.assertFalse((self.out / 'release-receipt.json').exists())
+
+    def workflow_push_matches(self, changed_path, branch):
+        lines = (SCRIPT.parents[2] / '.github/workflows/astforum-image.yml').read_text().splitlines()
+        filters, section = {'branches': [], 'paths': []}, None
+        for line in lines:
+            if line.startswith('    branches:') or line.startswith('    paths:'):
+                section, value = line.strip().split(':', 1)
+                if value.strip():
+                    filters[section] = [item.strip().strip("\"'") for item in value.strip()[1:-1].split(',')]
+            elif line.startswith('      - ') and section:
+                filters[section].append(line.strip()[2:].strip("\"'"))
+            elif line and not line.startswith('      '):
+                section = None
+        return (any(fnmatchcase(branch, pattern) for pattern in filters['branches']) and
+                any(fnmatchcase(changed_path, pattern) for pattern in filters['paths']))
+
+    def test_push_of_every_consumed_context_root_triggers_candidate(self):
+        spec = importlib.util.spec_from_file_location('clean_build', SCRIPT)
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        for root in module.INPUTS:
+            changed_path = root + '/nested/changed-source.ts' if (SCRIPT.parents[2] / root).is_dir() else root
+            with self.subTest(changed_path=changed_path):
+                self.assertTrue(self.workflow_push_matches(changed_path, 'codex/PROJ-153-cal-diy-image-provenance'))
+
+    def test_dependent_candidate_branch_triggers_push_verification(self):
+        self.assertTrue(self.workflow_push_matches('yarn.lock', 'codex/PROJ-153-cal-diy-image-verification-fixes'))
 
     def test_receipt_rejects_identity_mismatch_or_failed_runtime(self):
         spec = importlib.util.spec_from_file_location('clean_build', SCRIPT)
