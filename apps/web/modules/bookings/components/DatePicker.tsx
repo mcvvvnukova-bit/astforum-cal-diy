@@ -1,18 +1,19 @@
-import { shallow } from "zustand/shallow";
-
 import type { Dayjs } from "@calcom/dayjs";
 import dayjs from "@calcom/dayjs";
+import { useSlotsViewOnSmallScreen } from "@calcom/embed-core/embed-iframe";
 import { useBookerStoreContext } from "@calcom/features/bookings/Booker/BookerStoreProvider";
+import { useDemoWidgetPresentation } from "@calcom/features/bookings/Booker/hooks/useDemoWidgetPresentation";
 import type { DatePickerClassNames } from "@calcom/features/bookings/Booker/types";
+import type { Slots } from "@calcom/features/bookings/types";
 import { DatePicker as DatePickerComponent } from "@calcom/features/calendars/components/DatePicker";
-import { useNonEmptyScheduleDays } from "@calcom/web/modules/schedules/hooks/useNonEmptyScheduleDays";
 import { weekdayToWeekIndex } from "@calcom/lib/dayjs";
 import { useLocale } from "@calcom/lib/hooks/useLocale";
 import type { User } from "@calcom/prisma/client";
 import type { PeriodData } from "@calcom/types/Event";
-import { useSlotsViewOnSmallScreen } from "@calcom/embed-core/embed-iframe";
-
-import type { Slots } from "@calcom/features/bookings/types";
+import classNamesHelper from "@calcom/ui/classNames";
+import { useNonEmptyScheduleDays } from "@calcom/web/modules/schedules/hooks/useNonEmptyScheduleDays";
+import { shallow } from "zustand/shallow";
+import demoWidgetActions from "./DemoWidgetActions.module.css";
 
 const useMoveToNextMonthOnNoAvailability = ({
   browsingDate,
@@ -79,6 +80,7 @@ export const DatePicker = ({
   onDateChange?: () => void;
 }) => {
   const { i18n } = useLocale();
+  const isDemoWidget = useDemoWidgetPresentation();
   const [month, selectedDate, layout] = useBookerStoreContext(
     (state) => [state.month, state.selectedDate, state.layout],
     shallow
@@ -138,7 +140,10 @@ export const DatePicker = ({
         datePickerDatesActive: classNames?.datePickerDatesActive,
         datePickerToggle: classNames?.datePickerToggle,
       }}
-      className={classNames?.datePickerContainer}
+      className={classNamesHelper(
+        classNames?.datePickerContainer,
+        isDemoWidget && demoWidgetActions.selectedDayCalendar
+      )}
       isLoading={isLoading}
       onChange={(date: Dayjs | null, omitUpdatingParams?: boolean) => {
         const newDate = date === null ? null : date.format("YYYY-MM-DD");

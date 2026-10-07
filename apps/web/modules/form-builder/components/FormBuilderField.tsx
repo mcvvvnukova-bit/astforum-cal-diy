@@ -1,24 +1,24 @@
-import { ErrorMessage } from "@hookform/error-message";
-import type { TFunction } from "i18next";
-import { Controller, useFormContext } from "react-hook-form";
-import type { z } from "zod";
-
+import { fieldsThatSupportLabelAsSafeHtml } from "@calcom/features/form-builder/fieldsThatSupportLabelAsSafeHtml";
+import { fieldTypesConfigMap } from "@calcom/features/form-builder/fieldTypes";
+import type { fieldsSchema } from "@calcom/features/form-builder/schema";
+import {
+  getFieldNameFromErrorMessage,
+  useShouldBeDisabledDueToPrefill,
+} from "@calcom/features/form-builder/useShouldBeDisabledDueToPrefill";
+import { getTranslatedConfig as getTranslatedVariantsConfig } from "@calcom/features/form-builder/utils/variantsConfig";
 import { useLocale } from "@calcom/lib/hooks/useLocale";
 import { markdownToSafeHTML } from "@calcom/lib/markdownToSafeHTML";
 import classNames from "@calcom/ui/classNames";
 import { InfoBadge } from "@calcom/ui/components/badge";
 import { Label } from "@calcom/ui/components/form";
+import PhoneInput from "@calcom/web/components/phone-input";
+import type { PhoneInputProps } from "@calcom/web/components/phone-input/PhoneInput";
 import { InfoIcon } from "@coss/ui/icons";
-
+import { ErrorMessage } from "@hookform/error-message";
+import type { TFunction } from "i18next";
+import { Controller, useFormContext } from "react-hook-form";
+import type { z } from "zod";
 import { Components, isValidValueProp } from "./Components";
-import { fieldTypesConfigMap } from "@calcom/features/form-builder/fieldTypes";
-import { fieldsThatSupportLabelAsSafeHtml } from "@calcom/features/form-builder/fieldsThatSupportLabelAsSafeHtml";
-import type { fieldsSchema } from "@calcom/features/form-builder/schema";
-import {
-  useShouldBeDisabledDueToPrefill,
-  getFieldNameFromErrorMessage,
-} from "@calcom/features/form-builder/useShouldBeDisabledDueToPrefill";
-import { getTranslatedConfig as getTranslatedVariantsConfig } from "@calcom/features/form-builder/utils/variantsConfig";
 
 // helper to render markdown label safely
 const renderLabel = (field: Partial<RhfFormField>) => {
@@ -38,6 +38,8 @@ type RhfForm = {
 type RhfFormFields = RhfForm["fields"];
 
 type RhfFormField = RhfFormFields[number];
+
+type PhonePresentation = Pick<PhoneInputProps, "fixedCountry">;
 
 type ValueProps =
   | {
@@ -65,11 +67,13 @@ export const FormBuilderField = ({
   readOnly,
   className,
   onValueChange,
+  phonePresentation,
 }: {
   field: RhfFormFields[number];
   readOnly: boolean;
   className: string;
   onValueChange?: (args: { name: string; value: unknown; prevValue: unknown }) => void;
+  phonePresentation?: PhonePresentation;
 }) => {
   const { t } = useLocale();
   const { control, formState } = useFormContext();
@@ -101,6 +105,7 @@ export const FormBuilderField = ({
                 setValue={setAndNotify}
                 noLabel={noLabel}
                 translatedDefaultLabel={translatedDefaultLabel}
+                phonePresentation={phonePresentation}
               />
               <ErrorMessage
                 name="responses"
@@ -151,12 +156,14 @@ const WithLabel = ({
   readOnly,
   htmlFor,
   noLabel = false,
+  phonePresentation,
 }: {
   field: Partial<RhfFormField>;
   readOnly: boolean;
   children: React.ReactNode;
   noLabel?: boolean;
   htmlFor: string;
+  phonePresentation?: PhonePresentation;
 }) => {
   const { t } = useLocale();
 
@@ -176,7 +183,9 @@ const WithLabel = ({
                 <span className="text-emphasis -mb-1 ml-1 text-sm font-medium leading-none">
                   {!readOnly && field.required ? "*" : ""}
                 </span>
-                {field.type === "phone" && <InfoBadge content={t("number_in_international_format")} />}
+                {field.type === "phone" && !phonePresentation?.fixedCountry ? (
+                  <InfoBadge content={t("number_in_international_format")} />
+                ) : null}
               </Label>
             </div>
           )}
@@ -246,6 +255,7 @@ export const ComponentForField = ({
   readOnly,
   noLabel,
   translatedDefaultLabel,
+  phonePresentation,
 }: {
   field: Omit<RhfFormField, "editable" | "label"> & {
     // Label is optional because radioInput doesn't have a label
@@ -254,6 +264,7 @@ export const ComponentForField = ({
   readOnly: boolean;
   noLabel?: boolean;
   translatedDefaultLabel?: string;
+  phonePresentation?: PhonePresentation;
 } & ValueProps) => {
   const fieldType = field.type || "text";
   const componentConfig = Components[fieldType];
@@ -269,6 +280,27 @@ export const ComponentForField = ({
   if (value !== undefined && !isValueOfPropsType(value, componentConfig.propsType)) {
     throw new Error(
       `Value ${value} is not valid for type ${componentConfig.propsType} for field ${field.name}`
+    );
+  }
+
+  if (fieldType === "phone" && phonePresentation?.fixedCountry) {
+    return (
+      <WithLabel
+        field={field}
+        htmlFor={field.name}
+        readOnly={readOnly}
+        noLabel={noLabel}
+        phonePresentation={phonePresentation}>
+        <PhoneInput
+          disabled={readOnly}
+          name={field.name}
+          placeholder={field.placeholder}
+          required={field.required}
+          value={value as string}
+          onChange={setValue as (value: string) => void}
+          fixedCountry={phonePresentation.fixedCountry}
+        />
+      </WithLabel>
     );
   }
 

@@ -1,0 +1,77 @@
+[
+  {
+    "original_path": "/home/testing-user/cal-days-build.gejaLS3l/vitest-days.mts",
+    "archive_path": "deployment/astforum/staging-tools/cal-days-build.gejaLS3l/vitest-days.mts",
+    "git_blob": "46a8fe1063dee78112ecf0dd9fdec63563e9ba48"
+  },
+  {
+    "original_path": "/home/testing-user/cal-days-build.gejaLS3l/DatePicker.demo.test.tsx",
+    "archive_path": "deployment/astforum/staging-tools/cal-days-build.gejaLS3l/DatePicker.demo.test.tsx",
+    "git_blob": "049d9f4acbb55fb8877d9d32547d8d0568f9a67e"
+  },
+  {
+    "original_path": "/home/testing-user/cal-days-build.gejaLS3l/typecheck.sh",
+    "archive_path": "deployment/astforum/staging-tools/cal-days-build.gejaLS3l/typecheck.sh",
+    "git_blob": "df3eab991d86747bfa5da9905afe9dc0a38c0e48"
+  },
+  {
+    "original_path": "/home/testing-user/confirmation-email-fix/deploy-confirmation-email.sh",
+    "archive_path": "deployment/astforum/staging-tools/confirmation-email-fix/deploy-confirmation-email.sh",
+    "git_blob": "55c5fff60ea68695472619419fd28bb3f014f6d7"
+  },
+  {
+    "original_path": "/home/testing-user/confirmation-email-fix/confirmation-mail-probe.py",
+    "archive_path": "deployment/astforum/staging-tools/confirmation-email-fix/confirmation-mail-probe.py",
+    "git_blob": "a88fe8d6c241b949100a7e4dc426fa3c3e5208de"
+  },
+  {
+    "original_path": "/home/testing-user/confirmation-email-fix/build.sh",
+    "archive_path": "deployment/astforum/staging-tools/confirmation-email-fix/build.sh",
+    "git_blob": "97a69dd9bfd63639fe40807fcb01a2286efae616"
+  },
+  {
+    "original_path": "/home/testing-user/cal-actions-build.c8xJYh7h/run-test-fix.sh",
+    "archive_path": "deployment/astforum/staging-tools/cal-actions-build.c8xJYh7h/run-test-fix.sh",
+    "git_blob": "70692e0ed8fc876efee2b1a3f8d0733d21eb44ee"
+  },
+  {
+    "original_path": "/home/testing-user/cal-actions-build.c8xJYh7h/previous-web.override.yaml",
+    "archive_path": "deployment/astforum/staging-tools/cal-actions-build.c8xJYh7h/previous-web.override.yaml",
+    "git_blob": "25830b0eb243b85a7ef8b5196f11a8ec5150d321"
+  },
+  {
+    "original_path": "/home/testing-user/cal-actions-build.c8xJYh7h/vitest-actions.mts",
+    "archive_path": "deployment/astforum/staging-tools/cal-actions-build.c8xJYh7h/vitest-actions.mts",
+    "git_blob": "6f304f742eff2cbeeffb86dc9ed276731d2c6cab"
+  },
+  {
+    "original_path": "/home/testing-user/cal-reminders-build.DIBF4g/verify-release.py",
+    "archive_path": "deployment/astforum/staging-tools/cal-reminders-build.DIBF4g/verify-release.py",
+    "git_blob": "4a63953b883a2db42aa2cc6a7d3a933b5426e114"
+  },
+  {
+    "original_path": "/home/testing-user/cal-reminders-build.DIBF4g/activate-release.py",
+    "archive_path": "deployment/astforum/staging-tools/cal-reminders-build.DIBF4g/activate-release.py",
+    "git_blob": "3d9c1801d4b2e7d9f020024725b20790a94a2e5f"
+  },
+  {
+    "original_path": "/home/testing-user/cal-reminders-build.DIBF4g/start-worker.sh",
+    "archive_path": "deployment/astforum/staging-tools/cal-reminders-build.DIBF4g/start-worker.sh",
+    "git_blob": "8ed432879d68a90e07172a12e3d6202de03ff1be"
+  },
+  {
+    "original_path": "/home/testing-user/cal-reminders-build.DIBF4g/prepare-release.py",
+    "archive_path": "deployment/astforum/staging-tools/cal-reminders-build.DIBF4g/prepare-release.py",
+    "git_blob": "8162db564c2c85284080e72fa801e5cfb3531561"
+  },
+  {
+    "original_path": "/home/testing-user/cal-reminders-build.DIBF4g/prepare-runtime-fix.py",
+    "archive_path": "deployment/astforum/staging-tools/cal-reminders-build.DIBF4g/prepare-runtime-fix.py",
+    "git_blob": "b8a4fa7964cf4fd25c5e54f3683962f0d522eaf6"
+  },
+  {
+    "original_path": "/home/testing-user/cal-reminders-build.DIBF4g/run-postgres-check.sh",
+    "archive_path": "deployment/astforum/staging-tools/cal-reminders-build.DIBF4g/run-postgres-check.sh",
+    "git_blob": "2025188d88ab80d8914b3e9db6c7757e94e42fa5"
+  }
+]

@@ -1,13 +1,15 @@
+import process from "node:process";
 import type { NextRequest } from "next/server";
 import { NextResponse } from "next/server";
-
+import { reconcileBookingReminders } from "../../bookings/reminders/runtime";
 import { TaskProcessor } from "../task-processor";
 
 async function handler(request: NextRequest) {
   const authHeader = request.headers.get("authorization");
-  if (authHeader !== `Bearer ${process.env.CRON_SECRET}`) {
+  if (!process.env.CRON_SECRET || authHeader !== `Bearer ${process.env.CRON_SECRET}`) {
     return new Response("Unauthorized", { status: 401 });
   }
+  await reconcileBookingReminders();
   const processor = new TaskProcessor();
   await processor.processQueue();
   return NextResponse.json({ success: true });
