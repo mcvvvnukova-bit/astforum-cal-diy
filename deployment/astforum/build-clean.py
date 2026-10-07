@@ -357,20 +357,34 @@ def build(repo, output, source):
             validate_receipt(receipt, source)
             return receipt
     finally:
-        for name in (db, web, smtp):
-            try:
-                command(['docker', 'logs', name], log=output / f'{name}.log', timeout=30)
-            except (RuntimeError, OSError, subprocess.TimeoutExpired):
-                pass
-        for kind, name in reversed(cleanup):
-            try:
-                cleanup_owned(kind, name, output / 'cleanup.log')
-            except (RuntimeError, OSError, subprocess.TimeoutExpired) as error:
-                cleanup_errors.append(str(error))
-                with (output / 'cleanup.log').open('a') as stream:
-                    stream.write(str(error) + '\n')
-        if cleanup_errors:
-            raise RuntimeError('Owned resource cleanup failed; inspect cleanup.log')
+        cancelled = isinstance(sys.exc_info()[1], BuildCancelled)
+        def defer_cancellation(signum, frame):
+            nonlocal cancelled
+            cancelled = True
+        # Finish bounded owned cleanup before propagating cancellation to the receipt boundary.
+        previous_handler = signal.signal(signal.SIGTERM, defer_cancellation)
+        try:
+            for name in (db, web, smtp):
+                try:
+                    command(['docker', 'logs', name], log=output / f'{name}.log', timeout=30)
+                except (RuntimeError, OSError, subprocess.TimeoutExpired):
+                    pass
+            for kind, name in reversed(cleanup):
+                try:
+                    cleanup_owned(kind, name, output / 'cleanup.log')
+                except (RuntimeError, OSError, subprocess.TimeoutExpired) as error:
+                    cleanup_errors.append(str(error))
+                    with (output / 'cleanup.log').open('a') as stream:
+                        stream.write(str(error) + '\n')
+            if cleanup_errors:
+                raise RuntimeError('Owned resource cleanup failed; inspect cleanup.log')
+        finally:
+            signal.signal(signal.SIGTERM, previous_handler)
+            if cancelled:
+                message = 'Build interrupted'
+                if cleanup_errors:
+                    message += '; Owned resource cleanup failed; inspect cleanup.log'
+                raise BuildCancelled(message)
 
 
 def main():

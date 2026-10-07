@@ -25,6 +25,7 @@ import os
 from pathlib import Path
 import sys
 import tarfile
+import time
 
 path = Path(os.environ['DOCKER_FAULT_STATE'])
 state = json.loads(path.read_text()) if path.exists() else {'container': [], 'network': [], 'builder': [], 'image': []}
@@ -32,6 +33,17 @@ args = sys.argv[1:]
 
 def save():
     path.write_text(json.dumps(state))
+
+phase = os.environ.get('DOCKER_HOLD_PHASE')
+if phase and not state.get('held') and (
+        (phase == 'logs' and args[0] == 'logs') or (phase == 'cleanup' and args[0] == 'rm')):
+    state['held'] = True
+    save()
+    Path(os.environ['DOCKER_HOLD_MARKER']).write_text(str(os.getpid()))
+    print('cleanup transport ready', flush=True)
+    time.sleep(0.5)
+    state['hold_finished'] = True
+    save()
 
 def fail(message):
     save()
@@ -48,6 +60,8 @@ def create(kind, name):
     save()
 
 def remove(kind, name):
+    state.setdefault('removals', []).append([kind, name])
+    save()
     if name not in state[kind]:
         fail('resource absent')
     if os.environ.get('DOCKER_FAULT_REMOVE') in (kind, name.rsplit('-', 1)[-1]):
@@ -127,6 +141,8 @@ elif args[:2] in (['network', 'rm'], ['buildx', 'rm'], ['image', 'rm']):
 elif args[:2] in (['container', 'ls'], ['network', 'ls'], ['buildx', 'ls'], ['image', 'ls']):
     kind = {'container': 'container', 'network': 'network', 'buildx': 'builder', 'image': 'image'}[args[0]]
     print('\n'.join(state[kind]))
+elif args[0] == 'exec' and args[-2:] == ['cat', '/tmp/reminder-tests.json']:
+    print(json.dumps({'numFailedTests': 0, 'numPendingTests': 0, 'numTotalTests': 1}))
 elif args[0] not in ('exec', 'logs', 'network', 'run'):
     fail('unsupported fault transport command')
 """
@@ -459,18 +475,88 @@ else:
         self.assertFalse((self.out / 'release-receipt.json').exists())
         self.assertTrue((self.out / 'failure.json').exists())
 
-    def fault_cli(self, create, before=False, remove=''):
+    def fault_cli(self, create, before=False, remove='', cancel_phase=''):
         bin_dir = self.root / 'fault-bin'
         bin_dir.mkdir(exist_ok=True)
         docker = bin_dir / 'docker'
         docker.write_text('#!' + os.sys.executable + '\n' + FAKE_DOCKER)
         docker.chmod(0o700)
         state_path = self.root / 'docker-state.json'
-        result = self.run_cli(env={**os.environ, 'PATH': str(bin_dir) + os.pathsep + os.environ['PATH'],
+        marker = self.root / 'cleanup-held'
+        marker.unlink(missing_ok=True)
+        env = {**os.environ, 'PATH': str(bin_dir) + os.pathsep + os.environ['PATH'],
                                   'DOCKER_FAULT_STATE': str(state_path), 'DOCKER_FAULT_CREATE': create,
                                   'DOCKER_FAULT_BEFORE': '1' if before else '0',
-                                  'DOCKER_FAULT_REMOVE': remove})
+                                  'DOCKER_FAULT_REMOVE': remove, 'DOCKER_HOLD_PHASE': cancel_phase,
+                                  'DOCKER_HOLD_MARKER': str(marker)}
+        if not cancel_phase:
+            result = self.run_cli(env=env)
+        else:
+            args = [os.sys.executable, str(SCRIPT), str(self.out), '--repo', str(self.repo)]
+            with subprocess.Popen(args, env=env, stdout=subprocess.PIPE, stderr=subprocess.PIPE) as process:
+                try:
+                    deadline = time.monotonic() + 5
+                    while not marker.exists() and time.monotonic() < deadline:
+                        time.sleep(0.01)
+                    self.assertTrue(marker.exists(), 'Actual build did not reach held finally transport')
+                    time.sleep(0.1)
+                    process.send_signal(signal.SIGTERM)
+                    stdout, stderr = process.communicate(timeout=5)
+                    result = subprocess.CompletedProcess(args, process.returncode, stdout.decode(), stderr.decode())
+                finally:
+                    if process.poll() is None:
+                        process.kill()
+                        process.communicate(timeout=3)
+                    if marker.exists():
+                        try:
+                            os.killpg(int(marker.read_text()), signal.SIGKILL)
+                        except ProcessLookupError:
+                            pass
         return result, json.loads(state_path.read_text())
+
+    def test_sigterm_during_actual_finally_preserves_all_owned_removals(self):
+        for create in ('', 'pg'):
+            for phase in ('logs', 'cleanup'):
+                with self.subTest(create=create, phase=phase):
+                    self.out = self.root / f'cancel-{create}-{phase}'
+                    (self.root / 'docker-state.json').unlink(missing_ok=True)
+                    result, state = self.fault_cli(create, cancel_phase=phase)
+                    self.assertNotEqual(result.returncode, 0, result.stderr)
+                    self.assertTrue(state.get('hold_finished'), 'Cancellation interrupted active owned cleanup')
+                    self.assertEqual({key: state[key] for key in ('container', 'network', 'builder', 'image')},
+                                     {'container': [], 'network': [], 'builder': [], 'image': []})
+                    self.assertEqual(len(state['removals']), 3 if create else 7)
+                    self.assertIn('interrupted', (self.out / 'failure.json').read_text())
+                    self.assertFalse((self.out / 'release-receipt.json').exists())
+
+    def test_actual_cleanup_normal_success_and_removal_error_controls(self):
+        for remove in ('', 'web'):
+            with self.subTest(remove=remove):
+                self.out = self.root / ('cleanup-control-' + remove)
+                (self.root / 'docker-state.json').unlink(missing_ok=True)
+                result, state = self.fault_cli('', remove=remove)
+                self.assertEqual(len(state['removals']), 7)
+                self.assertEqual(result.returncode, 1 if remove else 0, result.stderr)
+                self.assertEqual(len(state['container']), 1 if remove else 0)
+                self.assertEqual([state[key] for key in ('network', 'builder', 'image')], [[], [], []])
+                if remove:
+                    self.assertIn('cleanup failed', (self.out / 'failure.json').read_text())
+                    self.assertFalse((self.out / 'release-receipt.json').exists())
+                else:
+                    self.assertTrue(json.loads((self.out / 'release-receipt.json').read_text())['cleanup'])
+                    self.assertFalse((self.out / 'failure.json').exists())
+
+    def test_actual_cleanup_cancellation_preserves_removal_failure_evidence(self):
+        result, state = self.fault_cli('', remove='web', cancel_phase='cleanup')
+        self.assertNotEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(len(state.get('removals', [])), 7)
+        self.assertEqual(len(state['container']), 1)
+        self.assertTrue(state['container'][0].endswith('-web'))
+        self.assertEqual([state[key] for key in ('network', 'builder', 'image')], [[], [], []])
+        self.assertIn('interrupted', (self.out / 'failure.json').read_text())
+        self.assertIn('cleanup failed', (self.out / 'failure.json').read_text())
+        self.assertIn('failed', (self.out / 'cleanup.log').read_text())
+        self.assertFalse((self.out / 'release-receipt.json').exists())
 
     def test_partial_creation_failure_cleans_every_registered_owned_resource(self):
         for kind in ('network', 'pg', 'builder', 'worker', 'smtp', 'migrate', 'web'):
