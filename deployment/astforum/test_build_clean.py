@@ -194,6 +194,45 @@ class CleanBuildTests(unittest.TestCase):
     def git(self, *args):
         return subprocess.check_output(['git', '-C', str(self.repo), *args], text=True)
 
+    def test_start_runs_git_nonexecutable_helpers_and_stops_before_web_on_init_failure(self):
+        context = self.root / 'startup'
+        context.mkdir()
+        tracked = subprocess.check_output(['git', '-C', str(SCRIPT.parents[2]), 'archive', 'HEAD',
+                                           'scripts/replace-placeholder.sh', 'scripts/wait-for-it.sh'])
+        with tarfile.open(fileobj=io.BytesIO(tracked)) as archive:
+            archive.extractall(context, filter='data')
+        for helper in (context / 'scripts').iterdir():
+            self.assertFalse(helper.stat().st_mode & 0o111)
+        bin_dir = context / 'node_modules/.bin'
+        bin_dir.mkdir(parents=True)
+        for name, arguments, marker in (
+                ('nc', '-w 1 -z owned-db 5432', 'database'),
+                ('prisma', 'migrate deploy --schema packages/prisma/schema.prisma', 'migration'),
+                ('ts-node', '--transpile-only scripts/seed-app-store.ts', 'seed'),
+                ('yarn', 'start', 'web')):
+            stub = bin_dir / name
+            stub.write_text(f'#!/bin/sh\n[ "$*" = "{arguments}" ] || exit 19\n'
+                            f'echo {marker} >> "$START_TRACE"\n'
+                            f'[ "${{START_FAILURE:-}}" != "{marker}" ] || exit 23\n')
+            stub.chmod(0o755)
+        start = SCRIPT.with_name('start.sh').read_text()
+        # Keep the real startup commands; only relocate its fixed container working directory.
+        self.assertEqual(start.count('cd /calcom\n'), 1)
+        start = start.replace('cd /calcom\n', '')
+        trace = context / 'trace'
+        for failure, expected in (('', ['database', 'migration', 'seed', 'web']),
+                                  ('migration', ['database', 'migration']),
+                                  ('seed', ['database', 'migration', 'seed'])):
+            with self.subTest(failure=failure):
+                trace.unlink(missing_ok=True)
+                result = subprocess.run(['sh', '-c', start], cwd=context, capture_output=True, text=True,
+                                        timeout=5, env={**os.environ, 'PATH': str(bin_dir) + ':' + os.environ['PATH'],
+                                        'DATABASE_HOST': 'owned-db:5432', 'BUILT_NEXT_PUBLIC_WEBAPP_URL': 'same',
+                                        'NEXT_PUBLIC_WEBAPP_URL': 'same', 'START_TRACE': str(trace),
+                                        'START_FAILURE': failure})
+                self.assertEqual(result.returncode, 23 if failure else 0, result.stderr)
+                self.assertEqual(trace.read_text().splitlines(), expected)
+
     def run_cli(self, *args, env=None):
         return subprocess.run([os.sys.executable, str(SCRIPT), str(self.out),
                                '--repo', str(self.repo), *args], capture_output=True, text=True, env=env)
