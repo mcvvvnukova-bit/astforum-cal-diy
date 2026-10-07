@@ -6,6 +6,7 @@ import json
 from fnmatch import fnmatchcase
 import os
 from pathlib import Path
+import socket
 import subprocess
 import tempfile
 import tarfile
@@ -71,6 +72,11 @@ elif args[:2] == ['buildx', 'build']:
     tag = args[args.index('--tag') + 1]
     if '--provenance=false' not in args or os.environ.get('BUILDX_METADATA_PROVENANCE') != 'max':
         fail('incompatible exporter/provenance contract')
+    db = next(name for name in state['container'] if name.endswith('-pg'))
+    if '--add-host' not in args or args[args.index('--add-host') + 1] != db + ':172.30.0.2':
+        fail('owned database host mapping absent')
+    if any(value.startswith('--network') or 'network.host' in value for value in args):
+        fail('default RUN network must remain isolated')
     state['tag'] = tag
     values = dict(args[i + 1].split('=', 1) for i, value in enumerate(args) if value == '--build-arg')
     state['labels'] = {
@@ -102,6 +108,9 @@ elif args[:2] == ['buildx', 'build']:
 elif args[0] == 'load':
     state['image'].append(state['tag'])
     save()
+elif args[0] == 'inspect':
+    print(json.dumps([{'Name': '/' + args[-1], 'NetworkSettings': {
+        'Networks': {state['network'][0]: {'IPAddress': '172.30.0.2'}}, 'Ports': {'5432/tcp': None}}}]))
 elif args[:2] == ['image', 'inspect']:
     if args[-1].startswith('postgres:'):
         print(json.dumps([{'RepoDigests': ['postgres@sha256:' + 'a' * 64]}]))
@@ -135,7 +144,7 @@ class CleanBuildTests(unittest.TestCase):
                      'i18n.json', 'apps/fixture', 'packages/fixture', 'example-apps/fixture',
                      'scripts/fixture', 'biome.json', 'biome-staged.json', 'LICENSE',
                      'deployment/astforum/start.sh', 'deployment/astforum/Dockerfile.clean',
-                     'deployment/astforum/reminder-worker.mjs'):
+                     'deployment/astforum/reminder-worker.mjs', 'deployment/astforum/check-build-database.mjs'):
             path = self.repo / name
             path.parent.mkdir(parents=True, exist_ok=True)
             path.write_text('fixture\n')
@@ -143,6 +152,44 @@ class CleanBuildTests(unittest.TestCase):
         self.git('-c', 'user.name=Test', '-c', 'user.email=test@example.test', 'commit', '-qm', 'fixture')
         self.sha = self.git('rev-parse', 'HEAD').strip()
         self.out = self.root / 'output'
+
+    def test_build_database_preflight_connects_only_to_expected_address_without_credentials(self):
+        script = SCRIPT.with_name('check-build-database.mjs')
+        with socket.socket() as server:
+            server.bind(('127.0.0.1', 0)); server.listen()
+            port = server.getsockname()[1]
+            env = {**os.environ, 'DATABASE_URL': f'postgresql://build:probe-private@127.0.0.1:{port}/build_clean',
+                   'BUILD_DATABASE_IP': '127.0.0.1'}
+            result = subprocess.run(['node', str(script)], env=env, capture_output=True, text=True, timeout=10)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            server.settimeout(1)
+            client, _ = server.accept(); client.close()
+            self.assertIn('TCP accepted', result.stdout)
+            self.assertNotIn('probe-private', result.stdout + result.stderr)
+            env['BUILD_DATABASE_IP'] = '192.0.2.1'
+            denied = subprocess.run(['node', str(script)], env=env, capture_output=True, text=True, timeout=10)
+            self.assertNotEqual(denied.returncode, 0)
+            self.assertNotIn('probe-private', denied.stdout + denied.stderr)
+            with self.assertRaises(socket.timeout):
+                server.accept()
+        env['BUILD_DATABASE_IP'] = '127.0.0.1'
+        refused = subprocess.run(['node', str(script)], env=env, capture_output=True, text=True, timeout=10)
+        self.assertNotEqual(refused.returncode, 0)
+
+    def test_build_database_address_is_bound_to_exact_owned_network_and_container(self):
+        module = importlib.util.module_from_spec(importlib.util.spec_from_file_location('clean_build', SCRIPT))
+        module.__spec__.loader.exec_module(module)
+        db, network = 'cal-clean-test-pg', 'cal-clean-test-build'
+        inspected = {'Name': '/' + db, 'NetworkSettings': {
+            'Networks': {network: {'IPAddress': '172.30.0.2'}}, 'Ports': {'5432/tcp': None}}}
+        self.assertEqual(module.build_database_ip(inspected, db, network), '172.30.0.2')
+        for altered in ({**inspected, 'Name': '/foreign-pg'},
+                        {**inspected, 'NetworkSettings': {'Networks': {'foreign': {'IPAddress': '172.30.0.2'}}}},
+                        {**inspected, 'NetworkSettings': {'Networks': {network: {'IPAddress': ''}}}},
+                        {**inspected, 'NetworkSettings': {'Networks': {network: {'IPAddress': '8.8.8.8'}}}},
+                        {**inspected, 'NetworkSettings': {**inspected['NetworkSettings'], 'Ports': {'5432/tcp': [{}]}}}):
+            with self.subTest(altered=altered), self.assertRaises(ValueError):
+                module.build_database_ip(altered, db, network)
 
     def git(self, *args):
         return subprocess.check_output(['git', '-C', str(self.repo), *args], text=True)
@@ -317,6 +364,8 @@ class CleanBuildTests(unittest.TestCase):
 
     def test_dependent_candidate_branch_triggers_push_verification(self):
         self.assertTrue(self.workflow_push_matches('yarn.lock', 'codex/PROJ-153-cal-diy-image-verification-fixes'))
+        self.assertTrue(self.workflow_push_matches('deployment/astforum/Dockerfile.clean',
+                                                  'codex/PROJ-153-cal-diy-build-network'))
 
     def test_receipt_rejects_identity_mismatch_or_failed_runtime(self):
         spec = importlib.util.spec_from_file_location('clean_build', SCRIPT)
