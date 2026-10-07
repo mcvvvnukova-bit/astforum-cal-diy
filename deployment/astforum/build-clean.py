@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Build a Git-only candidate; write a success receipt only after isolated verification."""
 import argparse
+import base64
 from datetime import datetime, timezone
 import hashlib
 import json
@@ -19,6 +20,8 @@ import time
 BASE = 'node:24.18.1-bookworm@sha256:19cd848a0e073d34bd8cd5545a1b6b4d28489b3e3b607366621ced442bd5f6b4'
 POSTGRES = 'postgres:16-alpine@sha256:721873c34ceb9f8d8fc265984940dc982404c105f19ad51be9fdc5970a6080ea'
 PLATFORM = 'linux/amd64'
+NODE_MATERIAL_DIGESTS = {BASE.rsplit('sha256:', 1)[1],
+                         '87362b5d965240a1bc79f85cec63179d4ee853741413b274a4721f2742eb8393'}
 CHECKS = ('image', 'credentials', 'worker', 'login', 'cron', 'reminders')
 INPUTS = ('package.json', 'yarn.lock', '.yarnrc.yml', '.yarn', 'turbo.json', 'i18n.json',
           'apps', 'packages', 'example-apps', 'scripts', 'biome.json', 'biome-staged.json', 'LICENSE', 'deployment/astforum/start.sh',
@@ -114,13 +117,51 @@ def output_path(output, repo):
 def validate_receipt(receipt, source):
     if receipt['source'] != source or receipt['platform'] != PLATFORM:
         raise ValueError('Source/platform mismatch')
-    if not re.fullmatch(r'sha256:[0-9a-f]{64}', receipt['image_id']):
+    if not re.fullmatch(r'[0-9a-f]{64}', receipt['metadata_sha256']):
+        raise ValueError('Missing metadata checksum')
+    if any(not re.fullmatch(r'sha256:[0-9a-f]{64}', receipt[field]) for field in
+           ('actual_image_id', 'image_config_id', 'exported_image_digest', 'archive_config_id')):
         raise ValueError('Invalid image identity')
-    if receipt['archive_config_id'] != receipt['image_id']:
+    if receipt['actual_image_id'] not in (receipt['image_config_id'], receipt['exported_image_digest']):
+        raise ValueError('Loaded image differs from exported manifest/config')
+    if receipt['archive_config_id'] != receipt['image_config_id']:
         raise ValueError('Exported archive differs from verified image')
     if set(receipt['verification']) != set(CHECKS) or any(
             value is not True for value in receipt['verification'].values()):
         raise ValueError('Runtime verification incomplete or failed')
+
+
+def validate_provenance(metadata, source):
+    record = metadata.get('buildx.build.provenance', {})
+    if (record.get('buildType') != 'https://mobyproject.org/buildkit@v1' or
+            not record.get('buildConfig', {}).get('llbDefinition')):
+        raise ValueError('Missing full max BuildKit build record')
+    materials = record.get('materials', [])
+    if not any(re.search(r'(^|/)node@', material.get('uri', '')) and
+               material.get('digest', {}).get('sha256') in NODE_MATERIAL_DIGESTS for material in materials):
+        raise ValueError('Build record lacks the pinned Node material')
+    infos = record.get('metadata', {}).get('https://mobyproject.org/buildkit@v1#metadata', {}).get(
+        'source', {}).get('infos', [])
+    if not any(Path(info.get('filename', '')).name == 'Dockerfile.clean' and
+               digest(base64.b64decode(info.get('data', ''), validate=True)) == source['dockerfile_sha256']
+               for info in infos):
+        raise ValueError('Build record recipe differs from Git source')
+
+
+def archive_identity(archive, manifest_id):
+    if not re.fullmatch(r'sha256:[0-9a-f]{64}', manifest_id):
+        raise ValueError('Invalid exported manifest digest')
+    with tarfile.open(archive) as stream:
+        manifest = json.load(stream.extractfile('manifest.json'))
+        config = stream.extractfile(manifest[0]['Config']).read()
+        config_id = 'sha256:' + digest(config)
+        raw = stream.extractfile('blobs/sha256/' + manifest_id.split(':')[1]).read()
+    if 'sha256:' + digest(raw) != manifest_id or json.loads(raw)['config']['digest'] != config_id:
+        raise ValueError('Exported manifest/config bytes mismatch')
+    parsed = json.loads(config)
+    if parsed['os'] + '/' + parsed['architecture'] != PLATFORM:
+        raise ValueError('Exported archive platform mismatch')
+    return config_id
 
 
 def wait_ready(probe, attempts=90):
@@ -209,8 +250,10 @@ def build(repo, output, source):
             docker('buildx', 'create', '--name', builder, '--driver', 'docker-container',
                    '--driver-opt', f'network={network}')
             metadata_path = output / 'buildkit-metadata.json'
+            image_archive = output / 'candidate.docker.tar'
             args = ['buildx', 'build', '--builder', builder, '--platform', PLATFORM, '--pull',
-                    '--no-cache', '--provenance=mode=max', '--load', '--tag', image,
+                    '--no-cache', '--provenance=false', '--tag', image,
+                    '--output', f'type=docker,dest={image_archive}',
                     '--metadata-file', str(metadata_path), '--secret', f'id=build_env,src={build_secret}',
                     '--file', str(context / 'deployment/astforum/Dockerfile.clean')]
             for key, value in [('VCS_REF', source['revision']), ('SOURCE_TREE', source['tree']),
@@ -219,6 +262,7 @@ def build(repo, output, source):
                 args += ['--build-arg', f'{key}={value}']
             cleanup.append(('image', image))
             docker(*args, '--progress=plain', context, live=True)
+            docker('load', '--input', image_archive)
             inspection = json.loads(docker('image', 'inspect', image))[0]
             image_id = inspection['Id']
             labels = inspection['Config']['Labels']
@@ -231,10 +275,12 @@ def build(repo, output, source):
                     inspection['Os'] + '/' + inspection['Architecture'] != PLATFORM):
                 raise ValueError('Actual image labels/platform mismatch')
             metadata = json.loads(metadata_path.read_text())
-            if metadata.get('containerimage.config.digest') != image_id:
-                raise ValueError('BuildKit and loaded image identity mismatch')
-            if not re.fullmatch(r'sha256:[0-9a-f]{64}', metadata.get('containerimage.digest', '')):
-                raise ValueError('Missing exported image digest')
+            validate_provenance(metadata, source)
+            exported_digest = metadata.get('containerimage.digest', '')
+            config_id = archive_identity(image_archive, exported_digest)
+            if (metadata.get('containerimage.config.digest', config_id) != config_id or
+                    image_id not in (config_id, exported_digest)):
+                raise ValueError('BuildKit/archive/loaded image identity mismatch')
             config_bytes = json.dumps(inspection['Config']).encode()
             if any(value.encode() in config_bytes for value in (password, auth, encryption, cron)):
                 raise ValueError('Persisted build credentials in image configuration')
@@ -270,14 +316,13 @@ def build(repo, output, source):
                 raise ValueError('Reminder tests failed or were skipped')
             (output / 'reminder-tests.json').write_text(json.dumps(test_report, indent=2) + '\n')
             verification['reminders'] = True
-            image_archive = output / 'candidate.docker.tar'
-            docker('save', '--output', image_archive, image)
-            with tarfile.open(image_archive) as stream:
-                manifest = json.load(stream.extractfile('manifest.json'))
-                archive_id = 'sha256:' + digest(stream.extractfile(manifest[0]['Config']).read())
-            receipt = {'source': source, 'base_image': BASE, 'platform': PLATFORM, 'image_id': image_id,
-                       'exported_image_digest': metadata['containerimage.digest'],
-                       'archive_config_id': archive_id, 'archive_sha256': file_digest(image_archive),
+            receipt = {'source': source, 'base_image': BASE, 'platform': PLATFORM,
+                       'actual_image_id': image_id, 'image_config_id': config_id,
+                       'exported_image_digest': exported_digest,
+                       'archive_config_id': config_id, 'archive_sha256': file_digest(image_archive),
+                       'metadata_sha256': file_digest(metadata_path),
+                       'provenance': {'format': 'buildx.build.provenance', 'mode': 'max',
+                                      'embedded_attestation': False},
                        'postgres_image_digests': postgres_id, 'tool_versions': versions, 'builder': builder,
                        'runtime_packages': docker('exec', web, 'dpkg-query', '-W', 'netcat-openbsd', 'wget'),
                        'started_at': started, 'finished_at': datetime.now(timezone.utc).isoformat(),

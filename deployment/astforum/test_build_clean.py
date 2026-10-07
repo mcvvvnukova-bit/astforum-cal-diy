@@ -1,4 +1,7 @@
 import importlib.util
+import base64
+import hashlib
+import io
 import json
 from fnmatch import fnmatchcase
 import os
@@ -12,10 +15,14 @@ import unittest
 SCRIPT = Path(__file__).with_name('build-clean.py')
 
 FAKE_DOCKER = r"""
+import base64
+import hashlib
+import io
 import json
 import os
 from pathlib import Path
 import sys
+import tarfile
 
 path = Path(os.environ['DOCKER_FAULT_STATE'])
 state = json.loads(path.read_text()) if path.exists() else {'container': [], 'network': [], 'builder': [], 'image': []}
@@ -62,22 +69,44 @@ elif args[:2] == ['buildx', 'create']:
     create('builder', args[args.index('--name') + 1])
 elif args[:2] == ['buildx', 'build']:
     tag = args[args.index('--tag') + 1]
-    state['image'].append(tag)
+    if '--provenance=false' not in args or os.environ.get('BUILDX_METADATA_PROVENANCE') != 'max':
+        fail('incompatible exporter/provenance contract')
+    state['tag'] = tag
     values = dict(args[i + 1].split('=', 1) for i, value in enumerate(args) if value == '--build-arg')
     state['labels'] = {
         'org.opencontainers.image.source': 'https://github.com/mcvvvnukova-bit/astforum-cal-diy',
         'org.opencontainers.image.revision': values['VCS_REF'], 'org.opencontainers.image.licenses': 'MIT',
         'ru.astforum.source.tree': values['SOURCE_TREE'], 'ru.astforum.lock.sha256': values['LOCK_SHA256'],
         'ru.astforum.dockerfile.sha256': values['DOCKERFILE_SHA256']}
+    config = json.dumps({'os': 'linux', 'architecture': 'amd64', 'config': {'Labels': state['labels']}}).encode()
+    state['config_id'] = 'sha256:' + hashlib.sha256(config).hexdigest()
+    raw = json.dumps({'config': {'digest': state['config_id']}}).encode()
+    manifest_id = 'sha256:' + hashlib.sha256(raw).hexdigest()
+    config_path = 'blobs/sha256/' + state['config_id'].split(':')[1]
+    archive = Path(args[args.index('--output') + 1].split('dest=', 1)[1])
+    with tarfile.open(archive, 'w') as stream:
+        for name, data in [('manifest.json', json.dumps([{'Config': config_path}]).encode()),
+                           (config_path, config), ('blobs/sha256/' + manifest_id.split(':')[1], raw)]:
+            member = tarfile.TarInfo(name); member.size = len(data)
+            stream.addfile(member, io.BytesIO(data))
+    recipe = Path(args[args.index('--file') + 1]).read_bytes()
     Path(args[args.index('--metadata-file') + 1]).write_text(json.dumps({
-        'containerimage.config.digest': 'sha256:' + 'b' * 64,
-        'containerimage.digest': 'sha256:' + 'c' * 64}))
+        'containerimage.config.digest': state['config_id'], 'containerimage.digest': manifest_id,
+        'buildx.build.provenance': {'buildType': 'https://mobyproject.org/buildkit@v1',
+            'buildConfig': {'llbDefinition': [{'id': 'step0'}]},
+            'materials': [{'uri': 'pkg:docker/node@24.18.1-bookworm', 'digest': {'sha256':
+                '87362b5d965240a1bc79f85cec63179d4ee853741413b274a4721f2742eb8393'}}],
+            'metadata': {'https://mobyproject.org/buildkit@v1#metadata': {'source': {'infos': [
+                {'filename': 'Dockerfile.clean', 'data': base64.b64encode(recipe).decode()}]}}}}}))
+    save()
+elif args[0] == 'load':
+    state['image'].append(state['tag'])
     save()
 elif args[:2] == ['image', 'inspect']:
     if args[-1].startswith('postgres:'):
         print(json.dumps([{'RepoDigests': ['postgres@sha256:' + 'a' * 64]}]))
     else:
-        print(json.dumps([{'Id': 'sha256:' + 'b' * 64, 'Os': 'linux', 'Architecture': 'amd64',
+        print(json.dumps([{'Id': state['config_id'], 'Os': 'linux', 'Architecture': 'amd64',
                            'Config': {'Labels': state['labels'], 'Env': []}}]))
 elif args[0] == 'run' and args[-1] == '/reminder-worker.mjs':
     print('fixture')
@@ -294,18 +323,73 @@ class CleanBuildTests(unittest.TestCase):
         module = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(module)
         source = {'revision': self.sha, 'tree': 'a' * 40}
-        receipt = {'source': source, 'image_id': 'sha256:' + 'b' * 64,
+        receipt = {'source': source, 'actual_image_id': 'sha256:' + 'b' * 64,
+                   'metadata_sha256': 'e' * 64,
+                   'image_config_id': 'sha256:' + 'b' * 64,
+                   'exported_image_digest': 'sha256:' + 'd' * 64,
                    'archive_config_id': 'sha256:' + 'b' * 64,
                    'platform': 'linux/amd64',
                    'verification': {key: True for key in module.CHECKS}}
         module.validate_receipt(receipt, source)
+        containerd = {**receipt, 'actual_image_id': receipt['exported_image_digest']}
+        module.validate_receipt(containerd, source)
         for field, bad in [('source', {'revision': 'c' * 40}),
                            ('archive_config_id', 'sha256:' + 'c' * 64),
+                           ('actual_image_id', 'sha256:' + 'c' * 64),
+                           ('metadata_sha256', ''),
                            ('verification', {key: False for key in module.CHECKS})]:
             altered = json.loads(json.dumps(receipt))
             altered[field] = bad
             with self.assertRaises(ValueError):
                 module.validate_receipt(altered, source)
+
+    def test_max_record_requires_exact_recipe_and_pinned_node_material(self):
+        module = importlib.util.module_from_spec(importlib.util.spec_from_file_location('clean_build', SCRIPT))
+        module.__spec__.loader.exec_module(module)
+        record = {'buildType': 'https://mobyproject.org/buildkit@v1',
+                  'buildConfig': {'llbDefinition': [{'id': 'step0'}]},
+                  'materials': [{'uri': 'pkg:docker/node@24.18.1-bookworm', 'digest': {'sha256':
+                      '87362b5d965240a1bc79f85cec63179d4ee853741413b274a4721f2742eb8393'}}],
+                  'metadata': {'https://mobyproject.org/buildkit@v1#metadata': {'source': {'infos': [
+                      {'filename': 'Dockerfile.clean', 'data': base64.b64encode(b'fixture\n').decode()}]}}}}
+        source = {'dockerfile_sha256': hashlib.sha256(b'fixture\n').hexdigest()}
+        module.validate_provenance({'buildx.build.provenance': record}, source)
+        for field, value in [('buildConfig', {}), ('materials', []), ('metadata', {})]:
+            with self.subTest(field=field), self.assertRaises(ValueError):
+                module.validate_provenance({'buildx.build.provenance': {**record, field: value}}, source)
+        with self.assertRaises(ValueError):
+            module.validate_provenance({'buildx.build.provenance': record}, {'dockerfile_sha256': '0' * 64})
+        changed = {**record, 'materials': [{'uri': 'pkg:docker/node@24.18.1-bookworm',
+                                          'digest': {'sha256': '0' * 64}}]}
+        with self.assertRaises(ValueError):
+            module.validate_provenance({'buildx.build.provenance': changed}, source)
+
+    def test_exported_manifest_config_are_verified_from_actual_archive_bytes(self):
+        module = importlib.util.module_from_spec(importlib.util.spec_from_file_location('clean_build', SCRIPT))
+        module.__spec__.loader.exec_module(module)
+        config = b'{"architecture":"amd64","os":"linux"}'
+        config_id = 'sha256:' + hashlib.sha256(config).hexdigest()
+        manifest = json.dumps({'config': {'digest': config_id}}).encode()
+        manifest_id = 'sha256:' + hashlib.sha256(manifest).hexdigest()
+        archive = self.root / 'candidate.tar'
+        config_path = 'blobs/sha256/' + config_id.split(':')[1]
+        with tarfile.open(archive, 'w') as stream:
+            for name, data in [('manifest.json', json.dumps([{'Config': config_path}]).encode()),
+                               (config_path, config), ('blobs/sha256/' + manifest_id.split(':')[1], manifest)]:
+                member = tarfile.TarInfo(name); member.size = len(data)
+                stream.addfile(member, io.BytesIO(data))
+        self.assertEqual(module.archive_identity(archive, manifest_id), config_id)
+        with self.assertRaises((ValueError, KeyError)):
+            module.archive_identity(archive, 'sha256:' + '0' * 64)
+        original = archive.read_bytes()
+        for path in (config_path, 'blobs/sha256/' + manifest_id.split(':')[1]):
+            with self.subTest(corrupt=path):
+                archive.write_bytes(original)
+                with tarfile.open(archive, 'a') as stream:
+                    member = tarfile.TarInfo(path); member.size = 2
+                    stream.addfile(member, io.BytesIO(b'{}'))
+                with self.assertRaises(ValueError):
+                    module.archive_identity(archive, manifest_id)
 
 
 if __name__ == '__main__':
