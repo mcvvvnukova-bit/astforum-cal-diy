@@ -4,6 +4,7 @@
 
 import { render, screen } from "@calcom/features/bookings/Booker/__tests__/test-utils";
 import type { BookerStore } from "@calcom/features/bookings/Booker/store";
+import { eventTypeBookingFields } from "@calcom/prisma/zod-utils";
 import type { Slot } from "@calcom/web/modules/schedules/lib/types";
 import type { ComponentProps } from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
@@ -45,7 +46,13 @@ const targetStore: Partial<BookerStore> = {
 };
 
 const event: AvailableTimesProps["event"] = {
-  data: { length: 60, metadata: {}, price: 0, currency: "USD", bookingFields: [] },
+  data: {
+    length: 60,
+    metadata: {},
+    price: 0,
+    currency: "USD",
+    bookingFields: eventTypeBookingFields.brand<"HAS_SYSTEM_FIELDS">().parse([]),
+  },
 };
 
 const renderAvailableTimes = ({
