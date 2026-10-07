@@ -30,6 +30,10 @@ INPUTS = ('package.json', 'yarn.lock', '.yarnrc.yml', '.yarn', 'turbo.json', 'i1
           'deployment/astforum/check-build-database.mjs')
 
 
+class BuildCancelled(Exception):
+    """Escape selector EINTR handling and readiness retries on cancellation."""
+
+
 def command(args, cwd=None, log=None, timeout=9000, live=False):
     output = bytearray()
     deadline = time.monotonic() + timeout
@@ -377,7 +381,7 @@ def main():
     parser.add_argument('--check', action='store_true')
     args = parser.parse_args()
     def interrupted(signum, frame):
-        raise InterruptedError('Build interrupted')
+        raise BuildCancelled('Build interrupted')
     signal.signal(signal.SIGTERM, interrupted)
     initialized = False
     try:

@@ -6,6 +6,7 @@ import json
 from fnmatch import fnmatchcase
 import os
 from pathlib import Path
+import signal
 import socket
 import subprocess
 import tempfile
@@ -277,6 +278,129 @@ class CleanBuildTests(unittest.TestCase):
                             "import time; print('partial',flush=True); time.sleep(10)"],
                            log=log, timeout=0.2)
         self.assertEqual(log.read_bytes(), b'partial\n')
+
+    def test_sigterm_during_selector_wait_fails_closed_and_kills_descendants(self):
+        self.assert_sigterm_cancels_build(readiness=False)
+
+    def test_sigterm_during_readiness_is_not_retried(self):
+        self.assert_sigterm_cancels_build(readiness=True)
+
+    def assert_sigterm_cancels_build(self, readiness):
+        release, pids = self.root / 'release', self.root / 'pids.json'
+        ready, survived = self.root / 'descendant-ready', self.root / 'survived'
+        descendant = (f"from pathlib import Path; import time; Path({str(ready)!r}).touch(); "
+                      f"time.sleep(0.8); Path({str(survived)!r}).touch(); time.sleep(10)")
+        child = f"""
+import json, os, subprocess, time
+from pathlib import Path
+descendant = subprocess.Popen([{os.sys.executable!r}, '-c', {descendant!r}])
+Path({str(pids)!r}).write_text(json.dumps([os.getpid(), descendant.pid]))
+while not Path({str(ready)!r}).exists(): time.sleep(0.01)
+print('held command ready', flush=True)
+while not Path({str(release)!r}).exists(): time.sleep(0.01)
+descendant.terminate()
+descendant.wait()
+"""
+        caller = f"""
+import importlib.util, sys
+from pathlib import Path
+spec = importlib.util.spec_from_file_location('clean_build', {str(SCRIPT)!r})
+module = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(module)
+def held_build(repo, output, source):
+    attempts = 0
+    def probe():
+        nonlocal attempts
+        attempts += 1
+        if attempts > 1:
+            (output / 'retried').touch()
+            return
+        module.command([{os.sys.executable!r}, '-c', {child!r}],
+                       log=output / 'pipeline.log', timeout=10)
+    try:
+        module.wait_ready(probe, attempts=2) if {readiness!r} else probe()
+        return {{'source': source}}
+    finally:
+        (output / 'cleanup-invoked').touch()
+module.build = held_build
+sys.argv = [{str(SCRIPT)!r}, {str(self.out)!r}, '--repo', {str(self.repo)!r}]
+module.main()
+"""
+        with subprocess.Popen([os.sys.executable, '-c', caller], stdout=subprocess.PIPE,
+                              stderr=subprocess.PIPE) as process:
+            cancelled = False
+            try:
+                deadline = time.monotonic() + 3
+                log = self.out / 'pipeline.log'
+                while time.monotonic() < deadline and not (
+                        log.exists() and b'held command ready' in log.read_bytes()):
+                    time.sleep(0.01)
+                self.assertIsNone(process.poll())
+                self.assertTrue(log.exists() and b'held command ready' in log.read_bytes())
+                # The child holds both pipe writers open without producing further bytes.
+                time.sleep(0.1)
+                process.send_signal(signal.SIGTERM)
+                try:
+                    stdout, stderr = process.communicate(timeout=1.5)
+                    cancelled = True
+                except subprocess.TimeoutExpired:
+                    release.touch()
+                    stdout, stderr = process.communicate(timeout=4)
+                states = {pid: subprocess.run(['ps', '-o', 'stat=', '-p', str(pid)],
+                          capture_output=True, text=True).stdout.strip() for pid in json.loads(pids.read_text())}
+            finally:
+                if process.poll() is None:
+                    process.kill()
+                    process.communicate(timeout=3)
+                if pids.exists():
+                    try:
+                        os.killpg(json.loads(pids.read_text())[0], signal.SIGKILL)
+                    except ProcessLookupError:
+                        pass
+            self.assertTrue(cancelled, f'SIGTERM did not stop the CLI promptly: rc={process.returncode}, '
+                            f'success={(self.out / "release-receipt.json").exists()}')
+            self.assertNotEqual(process.returncode, 0, stderr)
+            self.assertTrue((self.out / 'cleanup-invoked').exists())
+            self.assertFalse((self.out / 'retried').exists())
+            self.assertFalse((self.out / 'release-receipt.json').exists())
+            self.assertIn('interrupted', json.loads((self.out / 'failure.json').read_text())['error'])
+            self.assertEqual(log.read_bytes(), b'held command ready\n')
+            self.assertFalse(survived.exists(), 'Descendant continued executing after cancellation')
+            for pid, state in states.items():
+                self.assertTrue(not state or state.startswith('Z'), f'Owned process {pid} still runs: {state}')
+
+    def test_command_deadline_remains_bounded_after_output_eof(self):
+        pid_path, log = self.root / 'eof-pid', self.root / 'eof.log'
+        child = (f"import os,time; from pathlib import Path; Path({str(pid_path)!r}).write_text(str(os.getpid())); "
+                 "print('before eof',flush=True); os.close(1); os.close(2); time.sleep(10)")
+        caller = f"""
+import runpy
+module = runpy.run_path({str(SCRIPT)!r})
+try:
+    module['command']([{os.sys.executable!r}, '-c', {child!r}], log={str(log)!r}, timeout=0.3)
+except RuntimeError as error:
+    print(error)
+else:
+    raise AssertionError('Expected elapsed deadline after EOF')
+"""
+        started = time.monotonic()
+        with subprocess.Popen([os.sys.executable, '-c', caller], stdout=subprocess.PIPE,
+                              stderr=subprocess.PIPE) as process:
+            try:
+                stdout, stderr = process.communicate(timeout=2)
+            finally:
+                if pid_path.exists():
+                    try:
+                        os.killpg(int(pid_path.read_text()), signal.SIGKILL)
+                    except ProcessLookupError:
+                        pass
+                if process.poll() is None:
+                    process.kill()
+                    process.communicate(timeout=3)
+        self.assertEqual(process.returncode, 0, stderr)
+        self.assertLess(time.monotonic() - started, 2)
+        self.assertIn(b'exceeded', stdout)
+        self.assertEqual(log.read_bytes(), b'before eof\n')
 
     def test_dirty_and_invalid_revisions_fail_closed(self):
         for revision in ('not-a-revision', 'HEAD', 'f' * 40):
