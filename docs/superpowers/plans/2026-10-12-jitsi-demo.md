@@ -18,7 +18,7 @@ Approved design: `docs/superpowers/specs/2026-10-12-jitsi-demo-design.md`. Targe
 - [x] Configure Jitsi host `https://vks.mvpspace.ru` and room pattern `{uuid}`; install the app for the demo organizer if needed.
 - [x] Set event 3 location to `integrations:jitsi`, save, and reopen to prove persistence; verify manager confirmation remains required.
 - [x] Validate distinct room paths and notification URLs with isolated test data through the live confirmation API. Card inspection exposed the display bug described below.
-- [ ] Save sanitized evidence and operator instructions; review the exact diff, commit and push the task branch, create a draft PR, and verify the OpenProject GitHub links.
+- [x] Save sanitized evidence and operator instructions; review the exact diff, commit and push the task branch, create a draft PR, and verify the OpenProject GitHub links (PR 5, tasks 70/71/180).
 
 ## Task 2: Preserve the generated URL in the meeting card
 
@@ -26,7 +26,7 @@ Approved design: `docs/superpowers/specs/2026-10-12-jitsi-demo-design.md`. Targe
 - [x] Extract the existing response-location decision into `apps/web/modules/bookings/lib/getRescheduleLocation.ts`; observe the regression fail against its previous behavior.
 - [x] Suppress a rescheduling override when its provider equals the persisted booking location. Keep different-provider previews and handle absent/invalid responses.
 - [x] Run the new regression and confirmation tests (14 passing) and the reminder suite (52 passing, one opt-in PostgreSQL test skipped).
-- [x] Complete web TypeScript verification, documenting the existing unrelated test failure and baseline Biome diagnostics. Web passes with only that unchanged test excluded.
+- [x] Complete web TypeScript verification. Full `type-check:ci --force` passes (9/9) after aligning the branch with the deployed `711aacc` base. Baseline Biome diagnostics are recorded.
 - [ ] Build and publish the checked web change after authorization required by the repository's full-build boundary; reopen a confirmed card and verify its actual link.
 - [ ] Cancel all isolated verification bookings and prove no reminder tasks or client messages were sent.
 
