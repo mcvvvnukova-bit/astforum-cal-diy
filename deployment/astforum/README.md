@@ -77,13 +77,72 @@ Production activation was verified on 2026-10-01 (Europe/Moscow) from source `8b
 
 When starting web through `yarn start` / Turbo, keep `BOOKING_REMINDER_EVENT_TYPE_IDS` in `turbo.json.globalEnv`; setting only the container environment does not pass it through Turbo's strict filtering.
 
-## Build
+## Clean candidate build
 
-Build the root Dockerfile for `linux/amd64`, using a temporary build database
-and build-only secrets. Supply `VCS_REF` with the source commit and
-`NEXT_PUBLIC_WEBAPP_URL=https://cal.astforum.ru`.
-Never pass production database credentials as Docker build arguments.
+From a clean checkout with Python 3.12+, Docker and Buildx:
 
-Verify the image's `org.opencontainers.image.source`, `.revision`, and
-`.licenses` labels, container health, Prisma schema compatibility, sign-in,
-and the bookings and availability pages before publishing a new version.
+```sh
+python3 deployment/astforum/build-clean.py /absolute/empty/output --check
+python3 deployment/astforum/build-clean.py /absolute/empty/output --revision "$(git rev-parse HEAD)"
+```
+
+The output must be outside the checkout and must not be a symlink or contain
+existing files. `--check` validates the snapshot/output without creating files.
+Only the full current HEAD is accepted. Commit all input changes first; dirty
+tracked or untracked files cause rejection. The context is a Git archive of
+selected application/build files, excluding historical deployment overlays.
+No host dependencies, `.next`, environment files or custom images are inherited.
+BuildKit RUN commands retain their default sandbox network. A temporary hosts
+mapping points only the generated PostgreSQL name at its IPv4 on the owned build
+bridge; the pipeline rejects foreign/missing addresses and published ports.
+A secret-mounted expected address gates a Node DNS/TCP preflight before install.
+The mapping expires with the private builder and is not a runtime setting.
+The existing tracked Prisma `.env` symlink and library test `.env.test` fixture
+are removed from the context without reading their contents; a regular Prisma
+`.env` file or any unknown private environment path causes rejection.
+Yarn performs an immutable install. Prisma, app-store and embedding artifacts
+are generated before the full Next build; Next type checking remains enabled
+and `yarn type-check:ci --force` is a separate required build gate.
+
+The pinned official Node 24.18.1 Bookworm image targets `linux/amd64`. Native
+amd64 CI is preferred; emulation on ARM may take substantially longer. The
+build needs substantial memory/disk and outbound access for dependency/font
+retrieval. The whole dependency chain is not claimed byte-reproducible:
+PostgreSQL 16 Alpine is digest-pinned; its actual digest and Docker/Buildx versions are recorded, while
+the Node base and lockfile pin the application recipe. Independent matching
+image digests require a second matching clean build.
+
+Disposable database/auth credentials are generated privately and passed to
+BuildKit through a secret mount. PostgreSQL has no published ports. After the
+build, runtime verification uses a separate internal Docker network and a local
+SMTP receiver. It checks actual image labels/platform and BuildKit config
+identity, absence of credentials in image configuration, worker source bytes at
+`/reminder-worker.mjs`, the login response, rejected and authenticated Tasker
+POSTs, and the reminder suite including its real PostgreSQL reconciliation
+and local SMTP MIME test. No production environment is consumed. These checks
+establish candidate behavior; they do not demonstrate live server parity or
+production activation, an authenticated user journey, or every booking route.
+
+Success creates `candidate.docker.tar`, `buildkit-metadata.json` (including
+BuildKit provenance), logs and `release-receipt.json`. The receipt records full
+source SHA/tree, Dockerfile/lock/worker hashes, base/platform, actual image ID,
+export digest, archive hash/config identity, build times and observed checks.
+The archive comes directly from BuildKit and those same bytes are explicitly
+loaded for runtime verification. The exported manifest and config digests are
+checked against actual archive blobs. `actual_image_id` must equal the config
+digest on classic stores or the exported manifest digest on containerd stores;
+`image_config_id` and `archive_config_id` must always match.
+The Docker exporter disables embedded attestations for compatibility. Full
+`BUILDX_METADATA_PROVENANCE=max` build-record provenance is retained separately:
+the pipeline requires the Git Dockerfile hash, full LLB recipe and pinned Node
+material digest. The receipt includes the metadata SHA256 and explicit record
+format/mode. Keep metadata, receipt and archive together. This does not claim an
+embedded or signed attestation.
+Failure preserves logs and `failure.json` and never emits a success receipt.
+Owned temporary containers, networks, builder, secrets and image tag are removed;
+cleanup failure also prevents success. Load the archive with `docker load -i`
+only when needed. It is a candidate, and publication remains a separate gate.
+
+The fork-only `AST Forum clean image` workflow invokes the same pipeline for the
+exact pushed SHA and retains artifacts for seven days. It requires no DockerHub
+credentials, upstream publication, production secrets or external messages.
