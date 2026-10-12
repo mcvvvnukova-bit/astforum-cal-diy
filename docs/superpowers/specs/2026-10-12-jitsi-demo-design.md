@@ -1,7 +1,7 @@
 # Jitsi for AST Forum demo bookings
 
 Approved by the user on 2026-10-12 (Europe/Moscow).
-Tasks: [PROJ-33](https://roadmap.astforum.ru/work_packages/PROJ-33), [PROJ-34](https://roadmap.astforum.ru/work_packages/PROJ-34); parent [PROJ-142](https://roadmap.astforum.ru/work_packages/PROJ-142).
+Tasks: [PROJ-33](https://roadmap.astforum.ru/work_packages/70), [PROJ-34](https://roadmap.astforum.ru/work_packages/71); parent [PROJ-142](https://roadmap.astforum.ru/work_packages/180).
 
 ## Agreed behavior
 
@@ -15,7 +15,7 @@ Jitsi starts the conference when the host connects. The portal uses internal hos
 
 Configure the installed Jitsi app and the demo event through the existing Cal.diy administration UI. Verify settings persist after reopening. Check two independent confirmations generate different UUID paths and that each saved URL equals its card and client confirmation/reminder URL. Verification must distinguish generated message content from SMTP acceptance and recipient delivery; real client email is outside test scope unless explicitly authorized.
 
-Current source already implements these paths: `packages/app-store/jitsivideo/lib/VideoApiAdapter.ts`, `packages/features/bookings/lib/handleConfirmation.ts`, `apps/web/modules/bookings/components/BookingDetailsSheet.tsx`, and `packages/features/bookings/reminders/repository.ts`. No new runtime code or database schema is required. Save sanitized configuration and verification evidence; publish documentation only to the AST Forum fork.
+Current source already implements URL creation and notification propagation: `packages/app-store/jitsivideo/lib/VideoApiAdapter.ts`, `packages/features/bookings/lib/handleConfirmation.ts`, `apps/web/modules/bookings/components/BookingDetailsSheet.tsx`, and `packages/features/bookings/reminders/repository.ts`. The live confirmation smoke exposed a display bug in `bookings-single-view.tsx`: an unchanged response location was treated as a rescheduling override and hid the saved URL. Correct that comparison within the existing web package and preserve the preview for a genuinely different location. No new integration adapter or database schema is required. Save sanitized configuration and verification evidence; publish only to the AST Forum fork.
 
 ## Limits and recovery
 

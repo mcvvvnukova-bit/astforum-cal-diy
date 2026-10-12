@@ -68,6 +68,7 @@ import EventReservationSchema from "@calcom/web/components/schemas/EventReservat
 import { timeZone } from "@calcom/web/lib/clock";
 
 import { usePaymentStatus } from "../hooks/usePaymentStatus";
+import { getRescheduleLocation } from "../lib/getRescheduleLocation";
 import type { PageProps } from "./bookings-single-view.getServerSideProps";
 
 const stringToBoolean = z
@@ -139,13 +140,7 @@ export default function Success(props: PageProps) {
   const tz = props.tz ? props.tz : isSuccessBookingPage && attendeeTimeZone ? attendeeTimeZone : timeZone();
 
   const location = bookingInfo.location as ReturnType<typeof getEventLocationValue>;
-  let rescheduleLocation: string | undefined;
-  if (
-    typeof bookingInfo.responses?.location === "object" &&
-    "optionValue" in bookingInfo.responses.location
-  ) {
-    rescheduleLocation = bookingInfo.responses.location.optionValue;
-  }
+  const rescheduleLocation = getRescheduleLocation(location, bookingInfo.responses?.location);
 
   const parsed = bookingMetadataSchema.safeParse(bookingInfo?.metadata ?? null);
   const parsedBookingMetadata = parsed.success ? parsed.data : null;

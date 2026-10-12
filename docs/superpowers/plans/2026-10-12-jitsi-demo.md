@@ -14,11 +14,21 @@ Approved design: `docs/superpowers/specs/2026-10-12-jitsi-demo-design.md`. Targe
 
 - [x] Verify the portal is Jitsi, the event uses Cal Video, and the existing adapter/card/email/reminder paths support the requested behavior.
 - [x] Resolve real OpenProject tasks under assistant account 8 and confirm the user-approved design.
-- [ ] Capture previous Jitsi app and event settings privately.
-- [ ] Configure Jitsi host `https://vks.mvpspace.ru` and room pattern `{uuid}`; install the app for the demo organizer if needed.
-- [ ] Set event 3 location to `integrations:jitsi`, save, and reopen to prove persistence; verify manager confirmation remains required.
-- [ ] Validate distinct room paths and consistent card/notification URLs with isolated test data or captured existing test paths. Record any unavailable runtime check explicitly.
+- [x] Capture previous Jitsi app and event settings privately.
+- [x] Configure Jitsi host `https://vks.mvpspace.ru` and room pattern `{uuid}`; install the app for the demo organizer if needed.
+- [x] Set event 3 location to `integrations:jitsi`, save, and reopen to prove persistence; verify manager confirmation remains required.
+- [x] Validate distinct room paths and notification URLs with isolated test data through the live confirmation API. Card inspection exposed the display bug described below.
 - [ ] Save sanitized evidence and operator instructions; review the exact diff, commit and push the task branch, create a draft PR, and verify the OpenProject GitHub links.
+
+## Task 2: Preserve the generated URL in the meeting card
+
+- [x] Reproduce the live card showing the generic Jitsi hint despite a saved URL.
+- [x] Extract the existing response-location decision into `apps/web/modules/bookings/lib/getRescheduleLocation.ts`; observe the regression fail against its previous behavior.
+- [x] Suppress a rescheduling override when its provider equals the persisted booking location. Keep different-provider previews and handle absent/invalid responses.
+- [x] Run the new regression and confirmation tests (14 passing) and the reminder suite (52 passing, one opt-in PostgreSQL test skipped).
+- [x] Complete web TypeScript verification, documenting the existing unrelated test failure and baseline Biome diagnostics. Web passes with only that unchanged test excluded.
+- [ ] Build and publish the checked web change after authorization required by the repository's full-build boundary; reopen a confirmed card and verify its actual link.
+- [ ] Cancel all isolated verification bookings and prove no reminder tasks or client messages were sent.
 
 ## Recovery
 
