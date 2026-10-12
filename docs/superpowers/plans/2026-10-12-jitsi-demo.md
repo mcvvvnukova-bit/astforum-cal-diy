@@ -27,8 +27,8 @@ Approved design: `docs/superpowers/specs/2026-10-12-jitsi-demo-design.md`. Targe
 - [x] Suppress a rescheduling override when its provider equals the persisted booking location. Keep different-provider previews and handle absent/invalid responses.
 - [x] Run the new regression and confirmation tests (14 passing) and the reminder suite (52 passing, one opt-in PostgreSQL test skipped).
 - [x] Complete web TypeScript verification. Full `type-check:ci --force` passes (9/9) after aligning the branch with the deployed `711aacc` base. Baseline Biome diagnostics are recorded.
-- [ ] Build and publish the checked web change after authorization required by the repository's full-build boundary; reopen a confirmed card and verify its actual link.
-- [ ] Cancel all isolated verification bookings and prove no reminder tasks or client messages were sent.
+- [x] Build and publish after explicit user authorization. Clean build run 38298793041 passed; web image `astforum/cal-diy:aefeda9b17b1` is healthy. Reopen both confirmed cards and verify each actual link matches its saved URL. Preserve the other 19 containers, database schema, environment, Jitsi settings and real bookings.
+- [x] Cancel all three isolated verification bookings without invoking mail transport; prove zero active fixtures/reminder tasks and unchanged real bookings. The clean build also ran all 53 reminder tests with PostgreSQL and isolated SMTP, with no skips.
 
 ## Recovery
 

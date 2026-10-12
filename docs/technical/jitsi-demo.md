@@ -25,4 +25,6 @@
 
 До настройки сохранить предыдущие значения приватно. Для отката конфигурации восстановить прежние `jitsiHost`, `jitsiPathPattern` и место встречи через те же страницы. Не переписывать метаданные уже созданных встреч. Для отката интерфейса вернуть предыдущий закреплённый образ web; миграции для этой правки не нужны.
 
+Опубликованная 12 октября ревизия: `aefeda9b17b1e817a7189a99940fef3d52687c36`, web-образ `astforum/cal-diy:aefeda9b17b1`. Предыдущий образ `astforum/cal-diy:711aacc8477e` и файл `rollback.override.yaml` сохранены в `/opt/astforum-cal-diy/releases/aefeda9b17b1e817a7189a99940fef3d52687c36/operations/`. При откате использовать сохранённый override и пересоздавать только web с `--no-deps`; он закрепляет `yarn start`, чтобы не запускать миграции/заполнение приложений и сохранять настройки Jitsi. Подробные результаты: [проверка и публикация](verification/2026-10-12-jitsi-demo.md).
+
 Задачи: [PROJ-33](https://roadmap.astforum.ru/work_packages/70), [PROJ-34](https://roadmap.astforum.ru/work_packages/71), [PROJ-142](https://roadmap.astforum.ru/work_packages/180).
