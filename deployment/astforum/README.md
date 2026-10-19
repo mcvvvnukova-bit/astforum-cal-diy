@@ -10,6 +10,20 @@ Use `compose.yaml` with a server-only `.env` based on `env.example`.
 Keep credentials outside the Git checkout and set file permissions to `0600`.
 Set `CALDIY_IMAGE` to the exact image tag built from the fork commit.
 
+Keep the web process timezone at `TZ=UTC`. Prisma stores UTC in PostgreSQL
+`timestamp without time zone` columns; node-postgres must read those values and
+serialize date filters using the same convention. A local process timezone shifts
+booking times and can move future meetings into the past list. The organizer's
+profile and schedules can still use `Europe/Moscow`; Cal.diy applies that timezone
+when displaying times and preparing notifications.
+
+Verify this contract against the running web container using read-only SQL fixtures:
+
+```sh
+docker exec -i -w /calcom astforum-cal-diy-web-1 node - \
+  < deployment/astforum/test-booking-timezone.cjs
+```
+
 ```sh
 docker compose --env-file /opt/astforum-cal-diy/.env \
   -f deployment/astforum/compose.yaml config -q

@@ -45,6 +45,10 @@ function getTestExclude() {
     "**/dist/**",
     "apps/api/v2/**/*.spec.ts",
     "__checks__/**/*.spec.ts",
+    // Preserved deployment snapshots and local browser probes are not unit suites.
+    "**/.superpowers/**",
+    "deployment/astforum/release-tools/**",
+    "deployment/astforum/staging-tools/**",
   ];
   if (isIntegrationMode || isTimezoneMode) {
     return [...baseExclude, "packages/embeds/**/*"];
