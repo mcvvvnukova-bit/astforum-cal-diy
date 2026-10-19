@@ -59,7 +59,8 @@ services:
       EMAIL_FROM_NAME: АСТ Форум
       CRON_SECRET: ${CRON_SECRET:-}
       BOOKING_REMINDER_EVENT_TYPE_IDS: ${BOOKING_REMINDER_EVENT_TYPE_IDS:-}
-      TZ: Europe/Moscow
+      # Prisma's timezone-free timestamps contain UTC; pg must use the same convention.
+      TZ: UTC
     expose:
       - "3000"
     networks:
