@@ -9,17 +9,21 @@ import tasksMap, { tasksConfig } from "./tasks";
 export class TaskProcessor {
   async processQueue(): Promise<void> {
     const tasks = await Task.getNextBatch();
-    console.info(`Processing ${tasks.length} tasks`, tasks);
+    console.info(`Processing ${tasks.length} tasks`);
 
     const tasksPromises = tasks.map(async (task) => {
       console.info(
-        `Processing task ${task.id}, attempt:${task.attempts} maxAttempts:${task.maxAttempts} lastFailedAttempt:${task.lastFailedAttemptAt}`,
-        task
+        `Processing task ${task.id}, attempt:${task.attempts} maxAttempts:${task.maxAttempts} lastFailedAttempt:${task.lastFailedAttemptAt}`
       );
       const taskHandlerGetter = tasksMap[task.type as keyof typeof tasksMap];
       if (!taskHandlerGetter) throw new Error(`Task handler not found for type ${task.type}`);
       const taskConfig = tasksConfig[task.type as keyof typeof tasksConfig];
       const taskHandler = await taskHandlerGetter();
+      // Reminder workers claim atomically and persist their own SMTP outcome. A duplicate
+      // worker must never mark another worker's in-flight send successful or retry it.
+      if (taskConfig && "managesLifecycle" in taskConfig && taskConfig.managesLifecycle) {
+        return taskHandler(task.payload, task.id);
+      }
       return taskHandler(task.payload, task.id)
         .then(async () => {
           await Task.succeed(task.id);

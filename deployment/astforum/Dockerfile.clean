@@ -1,0 +1,39 @@
+# syntax=docker/dockerfile:1.8.1@sha256:e87caa74dcb7d46cd820352bfea12591f3dba3ddc4285e19c7dcd13359f7cefd
+FROM node:24.18.1-bookworm@sha256:19cd848a0e073d34bd8cd5545a1b6b4d28489b3e3b607366621ced442bd5f6b4 AS build
+WORKDIR /calcom
+COPY . .
+ARG VCS_REF
+ENV NEXT_PUBLIC_WEBAPP_URL=https://cal.astforum.ru CALCOM_TELEMETRY_DISABLED=1 NEXT_TELEMETRY_DISABLED=1 HUSKY=0 NODE_OPTIONS=--max-old-space-size=6144
+RUN --mount=type=secret,id=build_env,required=true \
+    set -eu; set -a; . /run/secrets/build_env; set +a; \
+    node deployment/astforum/check-build-database.mjs
+RUN --mount=type=secret,id=build_env,required=true \
+    set -eu; set -a; . /run/secrets/build_env; set +a; \
+    node .yarn/releases/yarn-4.12.0.cjs install --immutable
+RUN --mount=type=secret,id=build_env,required=true \
+    set -eu; set -a; . /run/secrets/build_env; set +a; \
+    yarn prisma migrate deploy && yarn prisma generate && \
+    yarn workspace @calcom/app-store-cli build && yarn workspace @calcom/trpc build && \
+    yarn workspace @calcom/embed-core tailwind && \
+    NEXT_PUBLIC_EMBED_FINGER_PRINT="$VCS_REF" NEXT_PUBLIC_EMBED_VERSION=1.5.3 yarn workspace @calcom/embed-core vite build && \
+    yarn workspace @calcom/embed-core tsc --emitDeclarationOnly --declarationDir dist && \
+    yarn workspace @calcom/web copy-app-store-static && \
+    yarn workspace @calcom/web build && yarn type-check:ci --force
+RUN rm -rf node_modules/.cache .yarn/cache apps/web/.next/cache .turbo
+
+FROM node:24.18.1-bookworm@sha256:19cd848a0e073d34bd8cd5545a1b6b4d28489b3e3b607366621ced442bd5f6b4 AS runtime
+WORKDIR /calcom
+RUN apt-get update && apt-get install -y --no-install-recommends netcat-openbsd wget && rm -rf /var/lib/apt/lists/*
+COPY --from=build /calcom /calcom
+COPY deployment/astforum/reminder-worker.mjs /reminder-worker.mjs
+ARG VCS_REF
+ARG SOURCE_TREE
+ARG LOCK_SHA256
+ARG DOCKERFILE_SHA256
+LABEL org.opencontainers.image.source="https://github.com/mcvvvnukova-bit/astforum-cal-diy" \
+      org.opencontainers.image.revision=$VCS_REF org.opencontainers.image.licenses="MIT" \
+      ru.astforum.source.tree=$SOURCE_TREE ru.astforum.lock.sha256=$LOCK_SHA256 \
+      ru.astforum.dockerfile.sha256=$DOCKERFILE_SHA256
+ENV NODE_ENV=production NEXT_PUBLIC_WEBAPP_URL=https://cal.astforum.ru BUILT_NEXT_PUBLIC_WEBAPP_URL=https://cal.astforum.ru
+EXPOSE 3000
+CMD ["sh", "/calcom/deployment/astforum/start.sh"]

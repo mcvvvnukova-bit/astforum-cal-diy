@@ -1,0 +1,22 @@
+diff --git a/docker-compose.yml b/docker-compose.yml
+index 2896b26..dd5966b 100644
+--- a/docker-compose.yml
++++ b/docker-compose.yml
+@@ -12,7 +12,7 @@ networks:
+ services:
+   database:
+     container_name: database
+-    image: postgres
++    image: postgres:16-alpine
+     restart: always
+     volumes:
+       - database-data:/var/lib/postgresql
+@@ -57,7 +57,7 @@ services:
+     networks:
+       - stack
+     ports:
+-      - 3000:3000
++      - "${WEB_PORT:-3000}:3000"
+     env_file: .env
+     environment:
+       - DATABASE_URL=postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@${DATABASE_HOST}/${POSTGRES_DB}

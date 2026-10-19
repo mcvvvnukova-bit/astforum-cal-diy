@@ -1,0 +1,68 @@
+{
+  "sourceRevision": "8b6088261b096d94d0304512b2df4ea32d4cb8ed",
+  "image": "astforum/cal-diy:8b6088261b09",
+  "imageId": "sha256:5d831afb41cb4c0051ea60985e0dee57a6eca77db7ef01074b75810f900720ed",
+  "createdAt": "2026-09-30T21:05:55.429Z",
+  "backup": "/opt/astforum-cal-diy/backups/smtp-reminders-20260930T204302Z",
+  "authenticatedCron": true,
+  "unauthorizedStatuses": [
+    401,
+    401
+  ],
+  "messages": [
+    {
+      "minutesBefore": 1440,
+      "bookingId": 11,
+      "expectedMessageId": "booking-reminder-86a5c698380f2d41555c1a5103965bc3495bbdb0f854b3645d1ff3f296f7d811@cal.astforum.ru",
+      "taskState": "smtp_accepted",
+      "attempts": 1
+    },
+    {
+      "minutesBefore": 60,
+      "bookingId": 12,
+      "expectedMessageId": "booking-reminder-5bbb539da0f715a563dfbdec6e5140b087c0e9eba568870a28e1ec033c825064@cal.astforum.ru",
+      "taskState": "smtp_accepted",
+      "attempts": 1
+    },
+    {
+      "minutesBefore": 15,
+      "bookingId": 13,
+      "expectedMessageId": "booking-reminder-bf21f70f7e3b716f6882285a6ea656736a78a9e0cac14d6b7cf897b542554897@cal.astforum.ru",
+      "taskState": "smtp_accepted",
+      "attempts": 1
+    }
+  ],
+  "deliveryQueues": [
+    {
+      "queueId": "332445746754262016",
+      "deliveryEvidence": [
+        "2026-09-30T21:08:06Z INFO Message delivered (delivery.delivered) queueId = 332445746754262016, queueName = \"remote\", from = \"notifications@astforum.ru\", to = [\"<test-recipient>\"], size = 4756, total = 1, hostname = \"gmail-smtp-in.l.google.com\", to = \"<test-recipient>\", code = 250, details = \"OK 2adb3069b0e04-5ba4403bb66si209729e87.140 - gsmtp\", elapsed = 339ms",
+        "2026-09-30T21:08:06Z INFO Delivery completed (delivery.completed) queueId = 332445746754262016, queueName = \"remote\", from = \"notifications@astforum.ru\", to = [\"<test-recipient>\"], size = 4756, total = 1, elapsed = 1000ms"
+      ]
+    },
+    {
+      "queueId": "332445746836051456",
+      "deliveryEvidence": [
+        "2026-09-30T21:08:06Z INFO Message delivered (delivery.delivered) queueId = 332445746836051456, queueName = \"remote\", from = \"notifications@astforum.ru\", to = [\"<test-recipient>\"], size = 4740, total = 1, hostname = \"gmail-smtp-in.l.google.com\", to = \"<test-recipient>\", code = 250, details = \"OK 2adb3069b0e04-5ba4402ee53si208373e87.127 - gsmtp\", elapsed = 432ms",
+        "2026-09-30T21:08:06Z INFO Delivery completed (delivery.completed) queueId = 332445746836051456, queueName = \"remote\", from = \"notifications@astforum.ru\", to = [\"<test-recipient>\"], size = 4740, total = 1, elapsed = 1000ms"
+      ]
+    },
+    {
+      "queueId": "332445746861217792",
+      "deliveryEvidence": [
+        "2026-09-30T21:08:06Z INFO Message delivered (delivery.delivered) queueId = 332445746861217792, queueName = \"remote\", from = \"notifications@astforum.ru\", to = [\"<test-recipient>\"], size = 2112, total = 1, hostname = \"gmail-smtp-in.l.google.com\", to = \"<test-recipient>\", code = 250, details = \"OK 2adb3069b0e04-5ba44045de8si246963e87.189 - gsmtp\", elapsed = 376ms",
+        "2026-09-30T21:08:06Z INFO Delivery completed (delivery.completed) queueId = 332445746861217792, queueName = \"remote\", from = \"notifications@astforum.ru\", to = [\"<test-recipient>\"], size = 2112, total = 1, elapsed = 1000ms"
+      ]
+    }
+  ],
+  "correlation": "Stalwart INFO omits Message-ID; three submissions to the sole test recipient in the task acceptance window, with three matching completed Gmail queues. Expected Message-IDs are recorded separately.",
+  "cancelledSkipped": true,
+  "movedSkipped": true,
+  "lateNotScheduled": true,
+  "unchangedNeighbors": 19,
+  "unchangedOriginalBookings": 3,
+  "webHealth": "healthy",
+  "workerRunning": true,
+  "workerPublishedPorts": false,
+  "recipient": "authorized Gmail test recipient (redacted)"
+}

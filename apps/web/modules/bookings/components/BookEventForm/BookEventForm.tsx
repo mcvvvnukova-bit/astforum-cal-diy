@@ -3,6 +3,7 @@ import { useIsPlatformBookerEmbed } from "@calcom/atoms/hooks/useIsPlatformBooke
 import { useBookerStoreContext } from "@calcom/features/bookings/Booker/BookerStoreProvider";
 import { useBookerTime } from "@calcom/features/bookings/Booker/hooks/useBookerTime";
 import type { UseBookingFormReturnType } from "@calcom/features/bookings/Booker/hooks/useBookingForm";
+import { useDemoWidgetPresentation } from "@calcom/features/bookings/Booker/hooks/useDemoWidgetPresentation";
 import { formatEventFromTime } from "@calcom/features/bookings/Booker/utils/dates";
 import type { BookerEvent } from "@calcom/features/bookings/types";
 import ServerTrans from "@calcom/lib/components/ServerTrans";
@@ -10,6 +11,7 @@ import { APP_NAME, WEBSITE_PRIVACY_POLICY_URL, WEBSITE_TERMS_URL } from "@calcom
 import { ErrorCode } from "@calcom/lib/errorCodes";
 import { useLocale } from "@calcom/lib/hooks/useLocale";
 import type { TimeFormat } from "@calcom/lib/timeFormat";
+import classNamesHelper from "@calcom/ui/classNames";
 import { Alert } from "@calcom/ui/components/alert";
 import { Button } from "@calcom/ui/components/button";
 import { EmptyScreen } from "@calcom/ui/components/empty-screen";
@@ -19,6 +21,7 @@ import Link from "next/link";
 import { useMemo, useState } from "react";
 import type { FieldError } from "react-hook-form";
 import type { IUseBookingErrors, IUseBookingLoadingStates } from "../../hooks/useBookings";
+import styles from "../DemoWidgetActions.module.css";
 import { BookingFields } from "./BookingFields";
 import { FormSkeleton } from "./Skeleton";
 
@@ -72,6 +75,9 @@ export const BookEventForm = ({
   const bookingData = useBookerStoreContext((state) => state.bookingData);
   const rescheduleUid = useBookerStoreContext((state) => state.rescheduleUid);
   const username = useBookerStoreContext((state) => state.username);
+  const bookerState = useBookerStoreContext((state) => state.state);
+  const isDemoWidget = useDemoWidgetPresentation();
+  const isDemoBookingStep = isDemoWidget && bookerState === "booking";
   const isPlatformBookerEmbed = useIsPlatformBookerEmbed();
   const { timeFormat, timezone } = useBookerTime();
 
@@ -178,7 +184,7 @@ export const BookEventForm = ({
           <div className="my-3 w-full text-xs text-subtle">
             <ServerTrans
               t={t}
-              i18nKey="signing_up_terms"
+              i18nKey={isDemoBookingStep ? "demo_booking_terms" : "signing_up_terms"}
               values={{ appName: APP_NAME }}
               components={[
                 <Link
@@ -244,7 +250,7 @@ export const BookEventForm = ({
               loadingStates.creatingRecurringBooking ||
               isVerificationCodeSending
             }
-            className={classNames?.confirmButton}
+            className={classNamesHelper(classNames?.confirmButton, isDemoWidget && styles.primaryAction)}
             data-testid={rescheduleUid && bookingData ? "confirm-reschedule-button" : "confirm-book-button"}>
             {rescheduleUid && bookingData
               ? t("reschedule")

@@ -4,6 +4,7 @@ type BookingAuditTaskConsumerPayload = string;
 
 export type TaskerTypes = "internal" | "redis";
 type TaskPayloads = {
+  sendBookingReminder: import("../bookings/reminders/service").ReminderPayload;
   sendWebhook: string;
   sendSms: string;
   triggerHostNoShowWebhook: z.infer<

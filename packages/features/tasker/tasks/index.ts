@@ -7,6 +7,8 @@ import type { TaskHandler, TaskTypes } from "../tasker";
  * The task handlers are imported dynamically to avoid circular dependencies.
  */
 const tasks: Record<TaskTypes, () => Promise<TaskHandler>> = {
+  sendBookingReminder: () =>
+    import("../../bookings/reminders/runtime").then((module) => module.sendBookingReminder),
   sendWebhook: () => import("./sendWebook").then((module) => module.sendWebhook),
   triggerHostNoShowWebhook: () =>
     import("./triggerNoShow/triggerHostNoShow").then((module) => module.triggerHostNoShow),
@@ -25,6 +27,7 @@ const tasks: Record<TaskTypes, () => Promise<TaskHandler>> = {
 };
 
 export const tasksConfig = {
+  sendBookingReminder: { managesLifecycle: true },
   createCRMEvent: {
     minRetryIntervalMins: IS_PRODUCTION ? 10 : 1,
     maxAttempts: 10,

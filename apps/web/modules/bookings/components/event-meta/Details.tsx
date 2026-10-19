@@ -1,4 +1,5 @@
 import { getPaymentAppData } from "@calcom/app-store/_utils/payments/getPaymentAppData";
+import { useDemoWidgetPresentation } from "@calcom/features/bookings/Booker/hooks/useDemoWidgetPresentation";
 import { useBookerStore } from "@calcom/features/bookings/Booker/store";
 import { Price } from "@calcom/features/bookings/components/event-meta/Price";
 import type { BookerEvent } from "@calcom/features/bookings/types";
@@ -131,12 +132,20 @@ export const EventMetaBlock = ({
 export const EventDetails = ({ event, blocks = defaultEventDetailsBlocks }: EventDetailsProps) => {
   const { t } = useLocale();
   const rescheduleUid = useBookerStore((state) => state.rescheduleUid);
+  const isDemoWidgetPresentation = useDemoWidgetPresentation();
 
   return (
     <>
       {blocks.map((block) => {
         if (typeof block === "function") {
           return <Fragment key={block.name}>{block(event)}</Fragment>;
+        }
+
+        if (
+          isDemoWidgetPresentation &&
+          (block === EventDetailBlocks.REQUIRES_CONFIRMATION || block === EventDetailBlocks.LOCATION)
+        ) {
+          return null;
         }
 
         switch (block) {

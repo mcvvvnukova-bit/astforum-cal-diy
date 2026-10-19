@@ -1,5 +1,7 @@
 import type { LocationObject } from "@calcom/app-store/locations";
 import { DefaultEventLocationTypeEnum, getOrganizerInputLocationTypes } from "@calcom/app-store/locations";
+import { useBookerStoreContext } from "@calcom/features/bookings/Booker/BookerStoreProvider";
+import { useDemoWidgetPresentation } from "@calcom/features/bookings/Booker/hooks/useDemoWidgetPresentation";
 import type { GetBookingType } from "@calcom/features/bookings/lib/get-booking";
 import getLocationOptionsForSelect from "@calcom/features/bookings/lib/getLocationOptionsForSelect";
 import { fieldsThatSupportLabelAsSafeHtml } from "@calcom/features/form-builder/fieldsThatSupportLabelAsSafeHtml";
@@ -22,6 +24,8 @@ const PhoneLocationSchema = z.object({
   value: z.literal(DefaultEventLocationTypeEnum.Phone),
   optionValue: z.string().optional(),
 });
+const FIXED_RUSSIAN_PHONE_PRESENTATION = { fixedCountry: "ru" } as const;
+
 export const BookingFields = ({
   fields,
   locations,
@@ -41,6 +45,9 @@ export const BookingFields = ({
 }) => {
   const { t, i18n } = useLocale();
   const { watch, setValue, formState } = useFormContext();
+  const isDemoWidget = useDemoWidgetPresentation();
+  const bookerState = useBookerStoreContext((state) => state.state);
+  const isDemoBookingStep = isDemoWidget && bookerState === "booking";
   const locationResponse = watch("responses.location");
   const currentView = rescheduleUid ? "reschedule" : "";
   // Identify all phone fields (except location field)
@@ -242,6 +249,9 @@ export const BookingFields = ({
             field={{ ...fieldWithPrice, hidden }}
             readOnly={readOnly}
             key={index}
+            phonePresentation={
+              isDemoBookingStep && field.type === "phone" ? FIXED_RUSSIAN_PHONE_PRESENTATION : undefined
+            }
             {...(field.name === SystemField.Enum.location && {
               onValueChange: ({ value }) => {
                 syncPhoneFields(value);

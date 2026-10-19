@@ -24,6 +24,31 @@ export type PhoneInputProps = {
   defaultCountry?: string;
   inputStyle?: CSSProperties;
   flagButtonStyle?: CSSProperties;
+  fixedCountry?: "ru";
+};
+
+const RUSSIAN_COUNTRY: string[] = ["ru"];
+
+const getPhoneValue = (value: string | undefined, fixedCountry?: "ru"): string | undefined => {
+  if (!value) return undefined;
+
+  const normalized = value.trim().replace(/^\+?/, "+");
+  if (fixedCountry === "ru" && !normalized.startsWith("+7")) return "+7";
+
+  return normalized;
+};
+
+const getChangedPhoneValue = (value: string, fixedCountry?: "ru"): string => {
+  let normalized = value;
+  if (!normalized.startsWith("+")) normalized = `+${normalized}`;
+  if (fixedCountry === "ru" && !normalized.startsWith("+7")) return "+7";
+
+  return normalized;
+};
+
+const getOnlyCountries = (fixedCountry?: "ru"): string[] | undefined => {
+  if (!fixedCountry) return undefined;
+  return RUSSIAN_COUNTRY;
 };
 
 function BasePhoneInput({
@@ -32,11 +57,13 @@ function BasePhoneInput({
   onChange,
   value,
   defaultCountry = "us",
+  fixedCountry,
   ...rest
-}: PhoneInputProps) {
+}: PhoneInputProps): JSX.Element {
   const isPlatform = useIsPlatform();
   const defaultPhoneCountryFromStore = useBookerStore((state) => state.defaultPhoneCountry);
   const effectiveDefaultCountry = defaultPhoneCountryFromStore || defaultCountry;
+  const country = fixedCountry ?? effectiveDefaultCountry;
 
   // This is to trigger validation on prefill value changes
   useEffect(() => {
@@ -55,19 +82,41 @@ function BasePhoneInput({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  useEffect(() => {
+    if (fixedCountry !== "ru" || !value) return;
+
+    const sanitized = value
+      .trim()
+      .replace(/[^\d+]/g, "")
+      .replace(/^\+?/, "+");
+
+    if (sanitized !== "+" && !sanitized.startsWith("+7")) onChange("+7");
+  }, [fixedCountry, onChange, value]);
+
   if (!isPlatform) {
     return (
-      <BasePhoneInputWeb name={name} className={className} onChange={onChange} value={value} {...rest} />
+      <BasePhoneInputWeb
+        name={name}
+        className={className}
+        onChange={onChange}
+        value={value}
+        fixedCountry={fixedCountry}
+        {...rest}
+      />
     );
   }
 
   return (
     <PhoneInput
       {...rest}
-      value={value ? value.trim().replace(/^\+?/, "+") : undefined}
-      enableSearch
+      value={getPhoneValue(value, fixedCountry)}
+      enableSearch={!fixedCountry}
       disableSearchIcon
-      country={effectiveDefaultCountry}
+      country={country}
+      onlyCountries={getOnlyCountries(fixedCountry)}
+      disableDropdown={!!fixedCountry}
+      countryCodeEditable={!fixedCountry}
+      disableCountryGuess={!!fixedCountry}
       masks={CUSTOM_PHONE_MASKS}
       inputProps={{
         name,
@@ -75,8 +124,8 @@ function BasePhoneInput({
         placeholder: rest.placeholder,
         autoComplete: "tel",
       }}
-      onChange={(val: string) => {
-        onChange(val.startsWith("+") ? val : `+${val}`);
+      onChange={(val: string): void => {
+        onChange(getChangedPhoneValue(val, fixedCountry));
       }}
       containerClass={classNames(
         "hover:border-emphasis focus-within:border-emphasis border-default !bg-default rounded-md border focus-within:outline-none focus-within:ring-0 focus-within:ring-brand-default disabled:cursor-not-allowed",
@@ -109,19 +158,25 @@ function BasePhoneInputWeb({
   value,
   inputStyle,
   flagButtonStyle,
+  fixedCountry,
   ...rest
-}: Omit<PhoneInputProps, "defaultCountry">) {
+}: Omit<PhoneInputProps, "defaultCountry">): JSX.Element {
   const defaultCountry = useDefaultCountry();
+  const country = fixedCountry ?? defaultCountry;
 
   return (
     <PhoneInput
       {...rest}
-      value={value ? value.trim().replace(/^\+?/, "+") : undefined}
-      // react-phone-input-2 treats `country` as a fallback. Keeping it stable 
-      // preserves calling-code-only values like `+371` during async updates, 
+      value={getPhoneValue(value, fixedCountry)}
+      // react-phone-input-2 treats `country` as a fallback. Keeping it stable
+      // preserves calling-code-only values like `+371` during async updates,
       // while full international numbers still resolve their country from `value`.
-      country={defaultCountry}
-      enableSearch
+      country={country}
+      onlyCountries={getOnlyCountries(fixedCountry)}
+      disableDropdown={!!fixedCountry}
+      countryCodeEditable={!fixedCountry}
+      disableCountryGuess={!!fixedCountry}
+      enableSearch={!fixedCountry}
       disableSearchIcon
       masks={CUSTOM_PHONE_MASKS}
       inputProps={{
@@ -130,8 +185,8 @@ function BasePhoneInputWeb({
         placeholder: rest.placeholder,
         autoComplete: "tel",
       }}
-      onChange={(val: string) => {
-        onChange(val.startsWith("+") ? val : `+${val}`);
+      onChange={(val: string): void => {
+        onChange(getChangedPhoneValue(val, fixedCountry));
       }}
       containerClass={classNames(
         "hover:border-emphasis focus-within:border-emphasis border-default !bg-default rounded-md border focus-within:outline-none focus-within:ring-0 focus-within:ring-brand-default disabled:cursor-not-allowed",
@@ -158,7 +213,7 @@ function BasePhoneInputWeb({
   );
 }
 
-const useDefaultCountry = () => {
+const useDefaultCountry = (): CountryCode => {
   const defaultPhoneCountryFromStore = useBookerStore((state) => state.defaultPhoneCountry);
   const [defaultCountry, setDefaultCountry] = useState<CountryCode>(defaultPhoneCountryFromStore || "us");
   const query = trpc.viewer.public.countryCode.useQuery(undefined, {

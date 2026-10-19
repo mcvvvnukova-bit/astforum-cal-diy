@@ -1,24 +1,26 @@
-import { useCallback, useMemo, useRef } from "react";
-
 import dayjs from "@calcom/dayjs";
+import { useBookerStoreContext } from "@calcom/features/bookings/Booker/BookerStoreProvider";
+import { useBookerTime } from "@calcom/features/bookings/Booker/hooks/useBookerTime";
+import { getQueryParam } from "@calcom/features/bookings/Booker/utils/query-param";
+import type { BookerEvent } from "@calcom/features/bookings/types";
+import { PUBLIC_INVALIDATE_AVAILABLE_SLOTS_ON_BOOKING_FORM } from "@calcom/lib/constants";
+import { useLocale } from "@calcom/lib/hooks/useLocale";
+import { localStorage } from "@calcom/lib/webstorage";
+import { BookerLayouts } from "@calcom/prisma/zod-utils";
+import classNames from "@calcom/ui/classNames";
 import {
   AvailableTimes,
   AvailableTimesSkeleton,
 } from "@calcom/web/modules/bookings/components/AvailableTimes";
-import { useBookerStoreContext } from "@calcom/features/bookings/Booker/BookerStoreProvider";
-import type { IUseBookingLoadingStates } from "../hooks/useBookings";
-import type { BookerEvent } from "@calcom/features/bookings/types";
-import type { Slot } from "~/schedules/lib/types";
+import { AvailableTimesHeader } from "@calcom/web/modules/bookings/components/AvailableTimesHeader";
+import { useDemoSlotSelectionPresentation } from "@calcom/web/modules/bookings/hooks/useDemoSlotSelectionPresentation";
+import type { useScheduleForEventReturnType } from "@calcom/web/modules/schedules/hooks/useEvent";
 import { useNonEmptyScheduleDays } from "@calcom/web/modules/schedules/hooks/useNonEmptyScheduleDays";
 import { useSlotsForAvailableDates } from "@calcom/web/modules/schedules/hooks/useSlotsForDate";
-import { PUBLIC_INVALIDATE_AVAILABLE_SLOTS_ON_BOOKING_FORM } from "@calcom/lib/constants";
-import { localStorage } from "@calcom/lib/webstorage";
-import { BookerLayouts } from "@calcom/prisma/zod-utils";
-import classNames from "@calcom/ui/classNames";
-
-import { AvailableTimesHeader } from "@calcom/web/modules/bookings/components/AvailableTimesHeader";
-import type { useScheduleForEventReturnType } from "@calcom/web/modules/schedules/hooks/useEvent";
-import { getQueryParam } from "@calcom/features/bookings/Booker/utils/query-param";
+import { GlobeIcon } from "@coss/ui/icons";
+import { useCallback, useMemo, useRef } from "react";
+import type { Slot } from "~/schedules/lib/types";
+import type { IUseBookingLoadingStates } from "../hooks/useBookings";
 
 type AvailableTimeSlotsProps = {
   extraDays?: number;
@@ -87,6 +89,9 @@ export const AvailableTimeSlots = ({
   const date = selectedDate || dayjs().format("YYYY-MM-DD");
   const [layout] = useBookerStoreContext((state) => [state.layout]);
   const isColumnView = layout === BookerLayouts.COLUMN_VIEW;
+  const isDemoSlotSelection = useDemoSlotSelectionPresentation();
+  const { timezone } = useBookerTime();
+  const { t } = useLocale();
   const containerRef = useRef<HTMLDivElement | null>(null);
   const { setTentativeSelectedTimeslots, tentativeSelectedTimeslots } = useBookerStoreContext((state) => ({
     setTentativeSelectedTimeslots: state.setTentativeSelectedTimeslots,
@@ -238,22 +243,38 @@ export const AvailableTimeSlots = ({
           slotsPerDay.length > 0 &&
           slotsPerDay.map((slots) => (
             <div key={slots.date} className="no-scrollbar overflow-x-hidden! h-full w-full overflow-y-auto">
-              <AvailableTimes
-                className={customClassNames?.availableTimeSlotsContainer}
-                customClassNames={customClassNames?.availableTimes}
-                showTimeFormatToggle={!isColumnView}
-                onTimeSelect={onTimeSelect}
-                onTentativeTimeSelect={onTentativeTimeSelect}
-                unavailableTimeSlots={unavailableTimeSlots}
-                slots={slots.slots}
-                showAvailableSeatsCount={showAvailableSeatsCount}
-                skipConfirmStep={skipConfirmStep}
-                seatsPerTimeSlot={seatsPerTimeSlot}
-                handleSlotClick={handleSlotClick}
-                confirmButtonDisabled={confirmButtonDisabled}
-                confirmStepClassNames={confirmStepClassNames}
-                {...props}
-              />
+              {isDemoSlotSelection && slots.slots.length === 0 ? (
+                <div
+                  data-testid="demo-slot-empty"
+                  className="flex h-full flex-col items-center rounded-md border border-subtle bg-subtle p-6 dark:bg-transparent">
+                  <p className="-mt-1 text-lg text-muted">{t("all_booked_today")}</p>
+                </div>
+              ) : (
+                <AvailableTimes
+                  className={customClassNames?.availableTimeSlotsContainer}
+                  customClassNames={customClassNames?.availableTimes}
+                  showTimeFormatToggle={!isColumnView}
+                  onTimeSelect={onTimeSelect}
+                  onTentativeTimeSelect={onTentativeTimeSelect}
+                  unavailableTimeSlots={unavailableTimeSlots}
+                  slots={slots.slots}
+                  showAvailableSeatsCount={showAvailableSeatsCount}
+                  skipConfirmStep={skipConfirmStep}
+                  seatsPerTimeSlot={seatsPerTimeSlot}
+                  handleSlotClick={handleSlotClick}
+                  confirmButtonDisabled={confirmButtonDisabled}
+                  confirmStepClassNames={confirmStepClassNames}
+                  {...props}
+                />
+              )}
+              {isDemoSlotSelection ? (
+                <div
+                  data-testid="demo-slot-timezone"
+                  className="mt-2 flex cursor-default items-start gap-2 pb-4 text-default text-sm">
+                  <GlobeIcon aria-hidden="true" className="h-4 w-4 shrink-0" />
+                  <span>{timezone === "Europe/Moscow" ? t("demo_booking_moscow_time") : timezone}</span>
+                </div>
+              ) : null}
             </div>
           ))}
       </div>

@@ -6,6 +6,7 @@ import dayjs from "@calcom/dayjs";
 import type { IOutOfOfficeData } from "@calcom/features/availability/lib/getUserAvailability";
 import { useBookerStoreContext } from "@calcom/features/bookings/Booker/BookerStoreProvider";
 import { useBookerTime } from "@calcom/features/bookings/Booker/hooks/useBookerTime";
+import { useDemoWidgetPresentation } from "@calcom/features/bookings/Booker/hooks/useDemoWidgetPresentation";
 import { getQueryParam } from "@calcom/features/bookings/Booker/utils/query-param";
 import { useCheckOverlapWithOverlay } from "@calcom/features/bookings/lib/useCheckOverlapWithOverlay";
 import type { BookerEvent, Slots } from "@calcom/features/bookings/types";
@@ -20,6 +21,7 @@ import { AnimatePresence, m } from "framer-motion";
 import { useMemo } from "react";
 import type { Slot } from "~/schedules/lib/types";
 import type { IUseBookingLoadingStates } from "../hooks/useBookings";
+import styles from "./DemoWidgetActions.module.css";
 import { OutOfOfficeInSlots } from "./OutOfOfficeInSlots";
 import { SeatsAvailabilityText } from "./SeatsAvailabilityText";
 
@@ -110,6 +112,7 @@ const SlotItem = ({
     getQueryParam("overlayCalendar") === "true" || localStorage.getItem("overlayCalendarSwitchDefault");
 
   const { timeFormat, timezone } = useBookerTime();
+  const isDemoWidget = useDemoWidgetPresentation();
   const bookingData = useBookerStoreContext((state) => state.bookingData);
   const layout = useBookerStoreContext((state) => state.layout);
   const hasTimeSlots = !!seatsPerTimeSlot;
@@ -205,7 +208,10 @@ const SlotItem = ({
                   variant={layout === "column_view" ? "icon" : "button"}
                   StartIcon={layout === "column_view" ? "chevron-right" : undefined}
                   type="button"
-                  className={confirmStepClassNames?.confirmButton}
+                  className={classNames(
+                    confirmStepClassNames?.confirmButton,
+                    isDemoWidget && styles.primaryAction
+                  )}
                   onClick={() =>
                     onTimeSelect &&
                     onTimeSelect(slot.time, slot?.attendees || 0, seatsPerTimeSlot, slot.bookingUid)

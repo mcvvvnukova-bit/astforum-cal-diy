@@ -1,11 +1,11 @@
+import { GET as handler } from "@calcom/features/tasker/api/cron";
 import { defaultResponderForAppDir } from "app/api/defaultResponderForAppDir";
 
-import { GET as handler } from "@calcom/features/tasker/api/cron";
-
 export const GET = defaultResponderForAppDir(handler);
+export const POST = defaultResponderForAppDir(handler);
 
 /**
- * This runs each minute and we need fresh data each time
+ * Scheduled workers need fresh data on every request.
  * @see https://nextjs.org/docs/app/building-your-application/caching#opting-out-2
  **/
 export const revalidate = 0;

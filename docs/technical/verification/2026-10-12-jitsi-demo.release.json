@@ -1,0 +1,40 @@
+{
+  "sourceRevision": "aefeda9b17b1e817a7189a99940fef3d52687c36",
+  "buildRun": "https://github.com/mcvvvnukova-bit/astforum-cal-diy/actions/runs/38298793041",
+  "image": "astforum/cal-diy:aefeda9b17b1",
+  "imageDigest": "sha256:8184ed3332b11c51d86dc95d5f7694741db94c71a0e70c6f00e303f4e494b61c",
+  "archiveSha256": "be43075761fa08089b87f6acb01de8175d4b19857be4cab58835f13595d87fa0",
+  "previousImage": "astforum/cal-diy:711aacc8477e",
+  "sourceSha256": {
+    "apps/web/modules/bookings/lib/getRescheduleLocation.ts": "e77a2bac8bacffa97529b6eef954459a8e80cdbfd9dc0815f39138f681804a68",
+    "apps/web/modules/bookings/views/bookings-single-view.tsx": "15700988a7f57168494dc9961f2803932bc39f69a264e611402acc316082a3c9"
+  },
+  "checks": {
+    "webHealthy": true,
+    "provenanceVerified": true,
+    "sourceHashesVerified": true,
+    "schemaPreserved": true,
+    "environmentPreserved": true,
+    "jitsiSettingsPreserved": true,
+    "realBookingsPreserved": true,
+    "otherContainerIdsPreserved": 19,
+    "confirmedCardsWithMatchingLinks": 2,
+    "distinctUuidRooms": 2,
+    "repeatConfirmationPreservedLink": true,
+    "confirmationAndThreeRemindersUseSavedLink": true
+  },
+  "tests": {
+    "cardAndConfirmationPassed": 14,
+    "remindersPassedInCleanBuild": 53,
+    "remindersSkippedInCleanBuild": 0,
+    "typeCheckTasksPassed": 9,
+    "buildPipelinePassed": 24
+  },
+  "cleanup": {
+    "cancelledFixtureCount": 3,
+    "activeFixtures": 0,
+    "fixtureReminderTasks": 0,
+    "transportInvokedForLiveFixtures": false,
+    "recipientInboxVerified": false
+  }
+}

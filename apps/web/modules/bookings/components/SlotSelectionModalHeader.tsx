@@ -9,6 +9,8 @@ import type { TimezoneSelectComponentProps } from "@calcom/features/timezone/com
 import { useLocale } from "@calcom/lib/hooks/useLocale";
 import { CURRENT_TIMEZONE } from "@calcom/lib/timezoneConstants";
 import { Button } from "@calcom/ui/components/button";
+import { useDemoSlotSelectionPresentation } from "@calcom/web/modules/bookings/hooks/useDemoSlotSelectionPresentation";
+import { formatSlotSelectionDate } from "@calcom/web/modules/bookings/lib/formatSlotSelectionDate";
 import { GlobeIcon } from "@coss/ui/icons";
 import dynamic from "next/dynamic";
 import type { ComponentType } from "react";
@@ -74,15 +76,17 @@ export const SlotSelectionModalHeader = ({
     () => (isPlatform ? [PlatformTimezoneSelect] : [WebTimezoneSelect]),
     [isPlatform]
   );
+  const isDemoSlotSelection = useDemoSlotSelectionPresentation();
 
   const formattedDate = useMemo(() => {
-    if (!selectedDate) return { dayOfWeek: "", fullDate: "" };
+    if (!selectedDate) return { dayOfWeek: "", fullDate: "", demoDate: "" };
 
     const date = dayjs(selectedDate);
     const dayOfWeek = date.locale(i18n.language).format("dddd");
     const fullDate = date.locale(i18n.language).format("MMMM D, YYYY");
+    const demoDate = formatSlotSelectionDate(date, i18n.language);
 
-    return { dayOfWeek, fullDate };
+    return { dayOfWeek, fullDate, demoDate };
   }, [selectedDate, i18n.language]);
 
   return (
@@ -96,42 +100,52 @@ export const SlotSelectionModalHeader = ({
               className="mb-2 ml-[-42px] w-[40px]"
               onClick={onClick}
             />{" "}
-            {formattedDate.dayOfWeek}
+            {isDemoSlotSelection ? (
+              <span data-testid="demo-slot-date" className="whitespace-normal">
+                {formattedDate.demoDate}
+              </span>
+            ) : (
+              formattedDate.dayOfWeek
+            )}
           </span>
-          <span className="text-default text-sm">{formattedDate.fullDate}</span>
+          {!isDemoSlotSelection ? (
+            <span className="text-default text-sm">{formattedDate.fullDate}</span>
+          ) : null}
         </div>
 
         {event && <EventDetails event={event} blocks={[EventDetailBlocks.DURATION]} />}
 
-        <div className="mb-0 flex items-center gap-2 text-default text-sm">
-          <GlobeIcon className="h-4 w-4 shrink-0 text-subtle" />
-          {TimezoneSelect && (
-            <span className="-mt-[2px] flex h-6 min-w-32 max-w-full items-center justify-start">
-              <TimezoneSelect
-                timeZones={timeZones}
-                menuPosition="fixed"
-                classNames={{
-                  control: () =>
-                    "min-h-0! p-0 w-full border-0 bg-transparent focus-within:ring-0 shadow-none!",
-                  menu: () => "w-64! max-w-[90vw] mb-1",
-                  singleValue: () => "text-text py-1",
-                  indicatorsContainer: () => "ml-auto",
-                  container: () => "max-w-full",
-                }}
-                value={
-                  event?.lockTimeZoneToggleOnBookingPage
-                    ? event.lockedTimeZone || CURRENT_TIMEZONE
-                    : timezone || CURRENT_TIMEZONE
-                }
-                onChange={({ value }) => {
-                  setTimezone(value);
-                  setBookerStoreTimezone(value);
-                }}
-                isDisabled={event?.lockTimeZoneToggleOnBookingPage}
-              />
-            </span>
-          )}
-        </div>
+        {!isDemoSlotSelection ? (
+          <div className="mb-0 flex items-center gap-2 text-default text-sm">
+            <GlobeIcon className="h-4 w-4 shrink-0 text-subtle" />
+            {TimezoneSelect && (
+              <span className="-mt-[2px] flex h-6 min-w-32 max-w-full items-center justify-start">
+                <TimezoneSelect
+                  timeZones={timeZones}
+                  menuPosition="fixed"
+                  classNames={{
+                    control: () =>
+                      "min-h-0! p-0 w-full border-0 bg-transparent focus-within:ring-0 shadow-none!",
+                    menu: () => "w-64! max-w-[90vw] mb-1",
+                    singleValue: () => "text-text py-1",
+                    indicatorsContainer: () => "ml-auto",
+                    container: () => "max-w-full",
+                  }}
+                  value={
+                    event?.lockTimeZoneToggleOnBookingPage
+                      ? event.lockedTimeZone || CURRENT_TIMEZONE
+                      : timezone || CURRENT_TIMEZONE
+                  }
+                  onChange={({ value }) => {
+                    setTimezone(value);
+                    setBookerStoreTimezone(value);
+                  }}
+                  isDisabled={event?.lockTimeZoneToggleOnBookingPage}
+                />
+              </span>
+            )}
+          </div>
+        ) : null}
       </div>
     </div>
   );
